@@ -5,6 +5,10 @@ import utc from "dayjs/plugin/utc.js";
 import timezone from "dayjs/plugin/timezone.js";
 import dotenv from "dotenv";
 
+import { postToBubble } from "../utils/bubbleSync";
+await postToBubble(process.env.BUBBLE_SUMMARY_SYNC_URL!, summaryPayload);
+
+
 dotenv.config();
 dayjs.extend(utc);
 dayjs.extend(timezone);
