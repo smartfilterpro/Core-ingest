@@ -1,4 +1,3 @@
-// src/db/ensureSchema.ts
 import { Pool } from 'pg';
 
 export async function ensureSchema(pool: Pool) {
@@ -79,7 +78,8 @@ export async function ensureSchema(pool: Pool) {
       state_json JSONB,
       created_at TIMESTAMP DEFAULT NOW()
     );
-        CREATE TABLE IF NOT EXISTS worker_runs (
+
+    CREATE TABLE IF NOT EXISTS worker_runs (
       id SERIAL PRIMARY KEY,
       worker_name TEXT NOT NULL,
       started_at TIMESTAMP DEFAULT NOW(),
@@ -89,9 +89,7 @@ export async function ensureSchema(pool: Pool) {
       error_message TEXT,
       created_at TIMESTAMP DEFAULT NOW()
     );
-
   `);
 
-  
   console.log('✅ Database schema ensured');
 }
