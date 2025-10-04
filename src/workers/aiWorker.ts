@@ -49,17 +49,9 @@ export async function aiWorker(pool: Pool) {
   console.log(`🧩 Fetched ${rows.length} device records for prediction`);
 
   for (const row of rows) {
-    const {
-      device_id,
-      zip_prefix,
-      runtime_since_reset,
-      avg_runtime,
-      last_reset
-    } = row;
-
+    const { device_id, zip_prefix, runtime_since_reset, avg_runtime, last_reset } = row;
     if (!runtime_since_reset) continue;
 
-    // baseline life = 3x regional average, fallback if null
     const expected_life =
       avg_runtime && avg_runtime > 0
         ? avg_runtime * DEFAULT_EXPECTED_MULTIPLIER
@@ -69,7 +61,6 @@ export async function aiWorker(pool: Pool) {
     const predicted_health = Math.max(0, Math.min(1, predicted_health_raw));
     const predicted_pct = Math.round(predicted_health * 100);
 
-    // anomaly detection: if runtime 2x region average
     const is_anomalous =
       avg_runtime && runtime_since_reset > avg_runtime * 2 * DEFAULT_EXPECTED_MULTIPLIER;
 
@@ -81,7 +72,7 @@ export async function aiWorker(pool: Pool) {
         runtime_since_reset,
         region_avg_runtime: avg_runtime,
         predicted_filter_health: predicted_pct,
-        is_anomalous
+        is_anomalous,
       });
       console.log(`📤 AI prediction sent for ${device_id}: ${predicted_pct}%`);
     } catch (err: any) {
