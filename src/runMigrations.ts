@@ -2,29 +2,33 @@ import fs from "fs";
 import path from "path";
 import { pool } from "./db/pool";
 
-
 async function runMigrations() {
+  console.log("Running migrations...");
+  const client = await pool.connect();
+
   try {
-    const migrationDir = path.join(process.cwd(), "migrations");
-    const files = fs
-      .readdirSync(migrationDir)
-      .filter(f => f.endsWith(".sql"))
-      .sort();
+    const dir = path.join(__dirname, "db/migrations");
+    const files = fs.readdirSync(dir).filter((f) => f.endsWith(".sql")).sort();
 
     for (const file of files) {
-      const filePath = path.join(migrationDir, file);
-      const sql = fs.readFileSync(filePath, "utf8");
-
-      logger.info(`🟢 Running migration: ${file}`);
-      await pool.query(sql);
-      logger.info(`✅ Migration ${file} applied successfully.`);
+      console.log(`🟡 Running migration: ${file}`);
+      const sql = fs.readFileSync(path.join(dir, file), "utf8");
+      await client.query(sql);
+      console.log(`✅ Completed ${file}`);
     }
-
-    process.exit(0);
   } catch (err: any) {
-    logger.error({ err }, "Migration failed");
-    process.exit(1);
+    console.error("❌ Migration error:", err.message);
+  } finally {
+    client.release();
   }
 }
 
-runMigrations();
+runMigrations()
+  .then(() => {
+    console.log("✅ All migrations complete");
+    process.exit(0);
+  })
+  .catch((err) => {
+    console.error("❌ Migration run failed:", err.message);
+    process.exit(1);
+  });
