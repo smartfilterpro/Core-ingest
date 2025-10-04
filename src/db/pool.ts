@@ -1,5 +1,6 @@
 import { Pool } from "pg";
 import dotenv from "dotenv";
+
 dotenv.config();
 
 export const pool = new Pool({
@@ -11,3 +12,6 @@ export const pool = new Pool({
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 10000,
 });
+
+pool.on("connect", () => console.log("✅ Connected to Postgres"));
+pool.on("error", (err) => console.error("Database pool error:", err.message));
