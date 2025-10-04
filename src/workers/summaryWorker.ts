@@ -1,37 +1,26 @@
-import { Pool } from "pg";
-import axios from "axios";
+import { pool } from "../db/pool";
+import { postToBubble } from "../utils/bubbleSync";
 import dayjs from "dayjs";
 import utc from "dayjs/plugin/utc.js";
 import timezone from "dayjs/plugin/timezone.js";
 import dotenv from "dotenv";
 
-import { postToBubble } from "../utils/bubbleSync";
-await postToBubble(process.env.BUBBLE_SUMMARY_SYNC_URL!, summaryPayload);
-
-
 dotenv.config();
 dayjs.extend(utc);
 dayjs.extend(timezone);
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL?.includes("localhost")
-    ? false
-    : { rejectUnauthorized: false },
-});
-
-const BUBBLE_SYNC_URL = process.env.BUBBLE_SYNC_URL!;
+const BUBBLE_URL = process.env.BUBBLE_SUMMARY_SYNC_URL!;
 const TZ = process.env.DEFAULT_TIMEZONE || "America/New_York";
 
 /**
- * Aggregates runtime sessions into daily summaries.
+ * Run daily summary aggregation from runtime_sessions → summaries_daily → region_averages
  */
 export async function runDailySummaryAggregation() {
   console.log("⏱️ Running summary aggregation...");
 
   const client = await pool.connect();
   try {
-    // --- 1. Aggregate per device per day ---
+    // 1️⃣ Aggregate runtime_sessions into summaries_daily
     const summaryQuery = `
       WITH daily AS (
         SELECT
@@ -82,11 +71,10 @@ export async function runDailySummaryAggregation() {
         runtime_hours = EXCLUDED.runtime_hours,
         updated_at = NOW();
     `;
-
     await client.query(summaryQuery, [TZ]);
-    console.log("✅ Daily summaries updated");
+    console.log("✅ summaries_daily updated");
 
-    // --- 2. Compute regional averages ---
+    // 2️⃣ Compute regional averages
     const regionQuery = `
       INSERT INTO region_averages (zip_prefix, summary_date, avg_runtime_seconds, updated_at)
       SELECT
@@ -102,11 +90,10 @@ export async function runDailySummaryAggregation() {
         avg_runtime_seconds = EXCLUDED.avg_runtime_seconds,
         updated_at = NOW();
     `;
-
     await client.query(regionQuery);
-    console.log("✅ Regional averages updated");
+    console.log("✅ region_averages updated");
 
-    // --- 3. POST recent summaries to Bubble ---
+    // 3️⃣ Sync yesterday’s summaries to Bubble
     const yesterday = dayjs().tz(TZ).subtract(1, "day").format("YYYY-MM-DD");
     const res = await client.query(
       `SELECT s.*, r.avg_runtime_seconds AS region_avg_runtime
@@ -118,31 +105,31 @@ export async function runDailySummaryAggregation() {
       [yesterday]
     );
 
+    console.log(`📊 Found ${res.rows.length} summaries to sync`);
+
     for (const row of res.rows) {
-      try {
-        await axios.post(BUBBLE_SYNC_URL, {
-          device_id: row.device_id,
-          summary_date: row.summary_date,
-          total_runtime_seconds: row.total_runtime_seconds,
-          avg_temp: row.avg_temp,
-          session_count: row.session_count,
-          region_avg_runtime: row.region_avg_runtime ?? null,
-        });
-      } catch (err) {
-        console.error("❌ Bubble sync failed for", row.device_id, err.message);
-      }
+      const payload = {
+        device_id: row.device_id,
+        summary_date: row.summary_date,
+        total_runtime_seconds: row.total_runtime_seconds,
+        avg_temp: row.avg_temp,
+        session_count: row.session_count,
+        region_avg_runtime: row.region_avg_runtime ?? null,
+      };
+      await postToBubble(BUBBLE_URL, payload);
     }
 
     console.log(`📤 Synced ${res.rows.length} summaries to Bubble`);
-  } catch (err) {
-    console.error("Summary aggregation error:", err);
+  } catch (err: any) {
+    console.error("❌ Summary aggregation error:", err.message);
   } finally {
     client.release();
   }
 }
 
 /**
- * Entry point — can run on cron or loop.
+ * Optional CLI entrypoint
+ * Example: `node dist/workers/summaryWorker.js --run`
  */
 if (process.argv.includes("--run")) {
   runDailySummaryAggregation().then(() => process.exit(0));
