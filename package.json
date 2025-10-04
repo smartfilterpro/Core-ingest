@@ -19,8 +19,6 @@
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "pg": "^8.11.5",
-
-    /* 👇 Add all type packages here so Railway installs them even in production */
     "@types/pg": "^8.10.3",
     "@types/express": "^4.17.21",
     "@types/node": "^20.14.10"
