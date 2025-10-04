@@ -116,7 +116,7 @@ async function stitchDevice(client: PoolClient, device_key: string, tailSeconds:
       `, [sid, started_at, device_key]);
 
       state.open_session_id = sid;
-      state.is_active = True;
+      state.is_active = true;
       state.last_event_ts = started_at;
       continue;
     }
