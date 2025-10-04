@@ -13,14 +13,14 @@ const BUBBLE_URL = process.env.BUBBLE_SUMMARY_SYNC_URL!;
 const TZ = process.env.DEFAULT_TIMEZONE || "America/New_York";
 
 /**
- * Run daily summary aggregation from runtime_sessions → summaries_daily → region_averages
+ * 🧮 Daily summary aggregation
  */
 export async function runDailySummaryAggregation() {
   console.log("⏱️ Running summary aggregation...");
 
   const client = await pool.connect();
   try {
-    // 1️⃣ Aggregate runtime_sessions into summaries_daily
+    // --- Daily aggregation ---
     const summaryQuery = `
       WITH daily AS (
         SELECT
@@ -74,7 +74,7 @@ export async function runDailySummaryAggregation() {
     await client.query(summaryQuery, [TZ]);
     console.log("✅ summaries_daily updated");
 
-    // 2️⃣ Compute regional averages
+    // --- Region averages ---
     const regionQuery = `
       INSERT INTO region_averages (zip_prefix, summary_date, avg_runtime_seconds, updated_at)
       SELECT
@@ -93,7 +93,7 @@ export async function runDailySummaryAggregation() {
     await client.query(regionQuery);
     console.log("✅ region_averages updated");
 
-    // 3️⃣ Sync yesterday’s summaries to Bubble
+    // --- Bubble sync ---
     const yesterday = dayjs().tz(TZ).subtract(1, "day").format("YYYY-MM-DD");
     const res = await client.query(
       `SELECT s.*, r.avg_runtime_seconds AS region_avg_runtime
@@ -128,9 +128,56 @@ export async function runDailySummaryAggregation() {
 }
 
 /**
- * Optional CLI entrypoint
- * Example: `node dist/workers/summaryWorker.js --run`
+ * 🕐 Hourly summary aggregation
+ * (only runs when launched with --hourly)
+ */
+async function runHourlyAggregation() {
+  const client = await pool.connect();
+  try {
+    console.log("⏱️ Running hourly summary aggregation...");
+    const hourlyQuery = `
+      WITH hourly AS (
+        SELECT
+          device_id,
+          DATE_TRUNC('hour', session_start) AS summary_hour,
+          COUNT(*) AS session_count,
+          SUM(EXTRACT(EPOCH FROM (session_end - session_start))) AS total_runtime_seconds,
+          AVG(avg_temp) AS avg_temp,
+          MAX(max_temp) AS max_temp,
+          MIN(min_temp) AS min_temp
+        FROM runtime_sessions
+        WHERE session_end IS NOT NULL
+        GROUP BY device_id, summary_hour
+      )
+      INSERT INTO summaries_hourly (
+        device_id, summary_hour,
+        total_runtime_seconds, avg_temp, max_temp, min_temp,
+        session_count
+      )
+      SELECT device_id, summary_hour,
+             total_runtime_seconds, avg_temp, max_temp, min_temp,
+             session_count
+      FROM hourly
+      ON CONFLICT (device_id, summary_hour)
+      DO UPDATE SET
+        total_runtime_seconds = EXCLUDED.total_runtime_seconds,
+        avg_temp = EXCLUDED.avg_temp,
+        max_temp = EXCLUDED.max_temp,
+        min_temp = EXCLUDED.min_temp,
+        session_count = EXCLUDED.session_count,
+        updated_at = NOW();
+    `;
+    await client.query(hourlyQuery);
+    console.log("✅ summaries_hourly updated");
+  } catch (err: any) {
+    console.error("❌ Hourly aggregation error:", err.message);
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * 🚀 CLI Entrypoint
  */
 if (process.argv.includes("--run")) {
-  runDailySummaryAggregation().then(() => process.exit(0));
-}
+  runDaily
