@@ -1,33 +1,20 @@
 import express from "express";
 import dotenv from "dotenv";
 import { pool } from "./db/pool";
-
-import bodyParser from "body-parser";
-
-
-import { ingest } from "./routes/ingest.js";
-
+import ingestRoute from "./routes/ingest";
+import healthRoute from "./routes/health";
+import filterResetRoute from "./routes/filterReset";
 
 dotenv.config();
+
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-app.use(bodyParser.json({ limit: "2mb" }));
-app.use(health);
-app.use(ingest);
-app.use(filterReset);
+app.use(express.json());
+app.use("/ingest", ingestRoute);
+app.use("/health", healthRoute);
+app.use("/filter-reset", filterResetRoute);
 
-// Global error handler
-app.use((err: any, _req: any, res: any, _next: any) => {
-  logger.error({ err }, "Unhandled server error");
-  res.status(500).json({ error: err.message || "Internal error" });
-});
-
-app.listen(PORT, async () => {
-  try {
-    await pool.query("SELECT 1");
-    logger.info(`✅ Core Ingest API running on port ${PORT}`);
-  } catch (err) {
-    logger.error({ err }, "❌ Database connection failed");
-  }
+app.listen(PORT, () => {
+  console.log(`✅ SmartFilterPro Core Ingest running on port ${PORT}`);
 });
