@@ -1,8 +1,9 @@
 {
   "name": "smartfilterpro-core-ingest",
   "version": "0.1.0",
-  "private": true,
-  "type": "module",
+  "description": "SmartFilterPro Core Ingest Service - receives normalized runtime events, stitches sessions, and posts summaries to Bubble.io",
+  "main": "dist/server.js",
+  "type": "commonjs",
   "scripts": {
     "build": "tsc",
     "start": "node dist/server.js",
@@ -13,20 +14,24 @@
     "worker:summary:hourly": "ts-node src/workers/summaryWorker.ts --hourly"
   },
   "dependencies": {
-    "axios": "^1.7.7",
-    "dayjs": "^1.11.13",
+    "axios": "^1.7.2",
+    "dayjs": "^1.11.11",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
-    "pino": "^9.3.2",
-    "pg": "^8.12.0",
-    "zod": "^3.23.8",
-    "uuid": "^9.0.1",
-    "node-cron": "^3.0.3"
+    "pg": "^8.11.5",
+
+    /* 👇 Add all type packages here so Railway installs them even in production */
+    "@types/pg": "^8.10.3",
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.14.10"
   },
   "devDependencies": {
-    "@types/express": "^4.17.21",
-    "@types/node": "^22.5.4",
-    "tsx": "^4.16.2",
-    "typescript": "^5.5.4"
-  }
+    "nodemon": "^3.1.4",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.4.5"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "license": "MIT"
 }
