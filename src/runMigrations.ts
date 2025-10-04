@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
-import { pool } from "../db.js";
-import { logger } from "../logger.js";
+import { pool } from "./db/pool";
+
 
 async function runMigrations() {
   try {
