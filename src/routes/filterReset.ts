@@ -5,11 +5,10 @@ import axios from "axios";
 const router = express.Router();
 
 /**
- * Endpoint to manually trigger a filter reset for a device.
- * Future: may also update filter_resets table or call Bubble.
+ * Manual or programmatic filter reset endpoint.
  */
 router.post("/", async (req: Request, res: Response) => {
-  const { device_id, user_id } = req.body;
+  const { device_id, user_id, source = "manual" } = req.body;
 
   if (!device_id || !user_id) {
     return res.status(400).json({ success: false, error: "Missing device_id or user_id" });
@@ -17,12 +16,12 @@ router.post("/", async (req: Request, res: Response) => {
 
   try {
     await pool.query(
-      `INSERT INTO filter_resets (device_id, user_id, triggered_at)
-       VALUES ($1, $2, NOW())`,
-      [device_id, user_id]
+      `INSERT INTO filter_resets (device_id, user_id, source, triggered_at)
+       VALUES ($1, $2, $3, NOW())`,
+      [device_id, user_id, source]
     );
 
-    // Optionally notify Bubble (if you have an endpoint for it)
+    // Optional Bubble sync
     if (process.env.BUBBLE_SYNC_URL) {
       await axios.post(process.env.BUBBLE_SYNC_URL, {
         event: "filter_reset",
