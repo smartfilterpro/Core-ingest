@@ -5,6 +5,11 @@ const BUBBLE_API_URL = process.env.BUBBLE_REGION_UPDATE_URL;
 const REGION_AGG_LOOKBACK_DAYS = parseInt(process.env.REGION_AGG_LOOKBACK_DAYS || '3');
 
 export async function runRegionAggregation(pool: Pool) {
+  const workerName = 'regionAggregationWorker';
+  const startTime = Date.now();
+  let success = false;
+  let errorMessage = null;
+
   console.log('🌎 Starting region aggregation worker...');
 
   const query = `
@@ -43,7 +48,6 @@ export async function runRegionAggregation(pool: Pool) {
             date: row.date,
             avg_runtime_seconds: row.avg_runtime_seconds,
             avg_temp: row.avg_temp,
-            device_count: row.device_count,
           });
           console.log(`📤 Synced region ${row.zip_prefix} for ${row.date}`);
         } catch (err: any) {
@@ -52,8 +56,21 @@ export async function runRegionAggregation(pool: Pool) {
       }
     }
 
+    success = true;
   } catch (err: any) {
+    errorMessage = err.message;
     console.error('❌ Region aggregation error:', err.message);
+  } finally {
+    const duration = (Date.now() - startTime) / 1000;
+    await pool.query(
+      `INSERT INTO worker_runs (worker_name, started_at, finished_at, duration_seconds, success, error_message)
+       VALUES ($1, NOW(), NOW(), $2, $3, $4)`,
+      [workerName, duration, success, errorMessage]
+    );
+
+    console.log(
+      `🕒 Worker run logged: ${workerName} (${duration.toFixed(2)}s, success=${success})`
+    );
   }
 
   console.log('🌎 Region aggregation complete.');
