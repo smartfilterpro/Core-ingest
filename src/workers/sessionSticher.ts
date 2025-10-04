@@ -116,7 +116,7 @@ async function stitchDevice(client: PoolClient, device_key: string, tailSeconds:
       `, [sid, started_at, device_key]);
 
       state.open_session_id = sid;
-      state.is_active = True;
+      state.is_active = true;
       state.last_event_ts = started_at;
       continue;
     }
@@ -129,7 +129,7 @@ async function stitchDevice(client: PoolClient, device_key: string, tailSeconds:
         SET last_event_ts = $1, is_active = false, updated_at = NOW()
         WHERE device_key = $2
       `, [tsISO, device_key]);
-      state.is_active = False;
+      state.is_active = false;
       state.last_event_ts = tsISO;
       // Closing is deferred to maybeCloseStale (tailSeconds)
       continue;
