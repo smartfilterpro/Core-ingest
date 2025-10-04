@@ -180,4 +180,7 @@ async function runHourlyAggregation() {
  * 🚀 CLI Entrypoint
  */
 if (process.argv.includes("--run")) {
-  runDaily
+  runDailySummaryAggregation().then(() => process.exit(0));
+} else if (process.argv.includes("--hourly")) {
+  runHourlyAggregation().then(() => process.exit(0));
+}
