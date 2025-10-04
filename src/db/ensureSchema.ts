@@ -79,7 +79,19 @@ export async function ensureSchema(pool: Pool) {
       state_json JSONB,
       created_at TIMESTAMP DEFAULT NOW()
     );
+        CREATE TABLE IF NOT EXISTS worker_runs (
+      id SERIAL PRIMARY KEY,
+      worker_name TEXT NOT NULL,
+      started_at TIMESTAMP DEFAULT NOW(),
+      finished_at TIMESTAMP,
+      duration_seconds NUMERIC,
+      success BOOLEAN DEFAULT false,
+      error_message TEXT,
+      created_at TIMESTAMP DEFAULT NOW()
+    );
+
   `);
 
+  
   console.log('✅ Database schema ensured');
 }
