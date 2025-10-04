@@ -14,4 +14,4 @@ export const pool = new Pool({
 });
 
 pool.on("connect", () => console.log("✅ Connected to Postgres"));
-pool.on("error", (err) => console.error("Database pool error:", err.message));
+pool.on("error", (err: Error) => console.error("Database pool error:", err.message));
