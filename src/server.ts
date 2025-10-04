@@ -1,12 +1,12 @@
 import express from "express";
 import dotenv from "dotenv";
-import { logger } from "./logger.js";
-import { pool } from "./db.js";
+import { pool } from "./db/pool";
+
 import bodyParser from "body-parser";
 
-import { health } from "./routes/health.js";
+
 import { ingest } from "./routes/ingest.js";
-import { filterReset } from "./routes/filterReset.js";
+
 
 dotenv.config();
 const app = express();
