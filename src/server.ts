@@ -6,6 +6,7 @@ import { runWorker } from './utils/runWorker';
 import { sessionStitcher } from './workers/sessionStitcher';
 import { summaryWorker } from './workers/summaryWorker';
 import { regionAggregationWorker } from './workers/regionAggregationWorker';
+import { aiWorker } from './workers/aiWorker';
 
 dotenv.config();
 
