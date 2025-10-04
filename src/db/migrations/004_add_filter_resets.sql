@@ -36,3 +36,19 @@ CREATE TRIGGER set_updated_at_filter_resets
 BEFORE UPDATE ON filter_resets
 FOR EACH ROW
 EXECUTE PROCEDURE set_updated_at();
+
+-- ============================================================
+-- View: v_filter_resets_detailed
+-- Shows joined data for filter resets + devices for debugging
+CREATE OR REPLACE VIEW v_filter_resets_detailed AS
+SELECT
+  f.id,
+  f.device_id,
+  d.device_name,
+  f.user_id,
+  f.source,
+  f.triggered_at,
+  f.notes
+FROM filter_resets f
+LEFT JOIN devices d ON f.device_id = d.device_id
+ORDER BY f.triggered_at DESC;
