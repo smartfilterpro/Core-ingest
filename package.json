@@ -6,10 +6,11 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/server.js",
-    "dev": "tsx watch src/server.ts",
-    "worker": "node dist/workers/summaryWorker.js",
-    "migrate": "node dist/utils/runMigration.js",
-    "stitcher": "node dist/workers/runSessionStitcher.js"
+    "dev": "nodemon src/server.ts",
+    "migrate": "ts-node src/runMigrations.ts",
+    "worker:session": "ts-node src/workers/sessionSticher.ts",
+    "worker:summary": "ts-node src/workers/summaryWorker.ts --run",
+    "worker:summary:hourly": "ts-node src/workers/summaryWorker.ts --hourly"
   },
   "dependencies": {
     "axios": "^1.7.7",
