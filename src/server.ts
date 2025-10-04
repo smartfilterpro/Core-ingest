@@ -4,6 +4,15 @@ import { pool } from "./db/pool";
 import ingestRoute from "./routes/ingest";
 import healthRoute from "./routes/health";
 import filterResetRoute from "./routes/filterReset";
+import { ensureSchema } from './db/ensureSchema';
+
+// after pool is created:
+if (pool) {
+  ensureSchema(pool).catch(err => {
+    console.error('❌ Schema ensure failed:', err);
+  });
+}
+
 
 dotenv.config();
 
