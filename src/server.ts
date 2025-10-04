@@ -1,9 +1,9 @@
 import express from 'express';
 import { Pool } from 'pg';
 import dotenv from 'dotenv';
-import axios from 'axios';
 import { ensureSchema } from './db/ensureSchema';
-import { runRegionAggregation } from './workers/regionAggregationWorker';
+import { runWorker } from './utils/runWorker';
+import { regionAggregationWorker } from './workers/regionAggregationWorker';
 
 dotenv.config();
 
@@ -60,22 +60,22 @@ app.post('/filter-reset', async (req, res) => {
   }
 });
 
-// ✅ Trigger region aggregation manually
+// ✅ Manual trigger for region aggregation
 app.get('/workers/region-aggregate', async (req, res) => {
   if (!pool) return res.status(503).json({ error: 'DB not connected' });
-  await runRegionAggregation(pool);
+  await runWorker(pool, 'regionAggregationWorker', regionAggregationWorker);
   res.json({ ok: true, message: 'Region aggregation complete' });
 });
 
-// ✅ Startup + initialization
+// ✅ Startup sequence
 async function start() {
   if (pool) {
     console.log('✅ Connected to database');
     await ensureSchema(pool);
     console.log('✅ Database schema ensured');
 
-    // Optional immediate run (can be disabled in production)
-    await runRegionAggregation(pool);
+    // Optional immediate worker run on startup (can disable in production)
+    await runWorker(pool, 'regionAggregationWorker', regionAggregationWorker);
   }
 
   app.listen(PORT, () => {
