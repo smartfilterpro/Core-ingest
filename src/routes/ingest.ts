@@ -1,5 +1,5 @@
 import express from 'express';
-import { pool } from '../db';
+import { pool } from '../database/db';   // ✅ Corrected import path
 import { z } from 'zod';
 
 const router = express.Router();
@@ -63,12 +63,14 @@ router.post('/', async (req, res) => {
           device_id, timestamp, is_active, is_cooling, is_heating, is_fan_running, is_fan_only,
           is_reachable, current_temperature_f, current_temperature_c, humidity_percent,
           target_temperature_f, target_temperature_c, heat_setpoint_f, heat_setpoint_c,
-          cool_setpoint_f, cool_setpoint_c, hvac_mode, equipment_status, runtime_seconds, runtime_minutes, is_runtime_event, metadata
+          cool_setpoint_f, cool_setpoint_c, hvac_mode, equipment_status, runtime_seconds,
+          runtime_minutes, is_runtime_event, metadata
         ) VALUES (
           $1,$2,$3,$4,$5,$6,$7,
           $8,$9,$10,$11,
           $12,$13,$14,$15,
-          $16,$17,$18,$19,$20,$21,$22,$23
+          $16,$17,$18,$19,$20,
+          $21,$22,$23
         )`,
         [
           data.device_id,
@@ -99,16 +101,16 @@ router.post('/', async (req, res) => {
 
       await client.query('COMMIT');
       res.json({ success: true });
-    } catch (err) {
+    } catch (err: any) {   // ✅ Explicit typing
       await client.query('ROLLBACK');
-      console.error('Error in ingest transaction:', err);
-      res.status(500).json({ success: false, error: err.message });
+      console.error('Error in ingest transaction:', err.message || err);
+      res.status(500).json({ success: false, error: err.message || 'Unknown error' });
     } finally {
       client.release();
     }
-  } catch (err) {
-    console.error('Validation failed:', err.message);
-    res.status(400).json({ success: false, error: err.message });
+  } catch (err: any) {   // ✅ Explicit typing
+    console.error('Validation failed:', err.message || err);
+    res.status(400).json({ success: false, error: err.message || 'Validation error' });
   }
 });
 
