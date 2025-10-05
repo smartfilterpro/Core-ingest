@@ -7,6 +7,7 @@ import { sessionStitcher } from './workers/sessionStitcher';
 import { summaryWorker } from './workers/summaryWorker';
 import { regionAggregationWorker } from './workers/regionAggregationWorker';
 import { aiWorker } from './workers/aiWorker';
+import ingestRouter from './routes/ingest'; // ✅ NEW: import ingest route
 
 dotenv.config();
 
@@ -44,6 +45,9 @@ app.get('/health', async (_req, res) => {
     res.status(500).json({ ok: false, error: err.message });
   }
 });
+
+// ✅ Mount ingest route
+app.use('/ingest', ingestRouter); // ✅ NEW: makes /ingest/v1/events:batch available
 
 // ✅ Filter reset route
 app.post('/filter-reset', async (req, res) => {
