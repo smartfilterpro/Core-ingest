@@ -16,13 +16,13 @@ router.post("/v1/events:batch", async (req: Request, res: Response) => {
   try {
     const client = await pool.connect();
     const insertQuery = `
-      INSERT INTO equipment_events (
-        device_id,
-        event_type,
-        is_active,
-        current_temp,
-        timestamp
-      ) VALUES ($1, $2, $3, $4, $5)
+INSERT INTO equipment_events (
+  device_id,
+  event_type,
+  is_active,
+  current_temp,
+  event_timestamp
+) VALUES ($1, $2, $3, $4, $5)
     `;
 
     for (const e of events) {
