@@ -33,7 +33,6 @@ export async function bubbleSummarySync() {
         runtime_sessions_count: row.runtime_sessions_count,
         avg_temperature: row.avg_temperature,
       };
-
       try {
         const res = await axios.post(BUBBLE_SYNC_URL, payload, {
           headers: { 'Content-Type': 'application/json' },
