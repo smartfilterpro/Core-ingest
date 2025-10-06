@@ -6,7 +6,7 @@ import { sessionStitcher } from './workers/sessionStitcher.js';
 import { summaryWorker } from './workers/summaryWorker.js';
 import { regionAggregationWorker } from './workers/regionAggregationWorker.js';
 import { aiWorker } from './workers/aiWorker.js';
-import ingestRouter from './routes/ingest.js';
+import { ingestRouter } from './routes/ingest.js';
 import filterResetRouter from './routes/filterReset.js';
 import bubbleSyncRouter from './routes/bubbleSync.js';
 import healthRouter from './routes/health.js';
