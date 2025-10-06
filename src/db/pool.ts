@@ -6,27 +6,26 @@ dotenv.config();
 const DATABASE_URL = process.env.DATABASE_URL;
 const ENABLE_DATABASE = process.env.ENABLE_DATABASE !== '0';
 
-export const pool = ENABLE_DATABASE && DATABASE_URL
-  ? new Pool({
-      connectionString: DATABASE_URL,
-      ssl: DATABASE_URL.includes('localhost')
-        ? false
-        : { rejectUnauthorized: false },
-      max: parseInt(process.env.DB_MAX_CONNECTIONS || '10'),
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 10000,
-    })
-  : null;
-
-if (pool) {
-  pool.on('connect', () => console.log('✅ Connected to Postgres'));
-  pool.on('error', (err: Error) => console.error('Database pool error:', err.message));
+if (!ENABLE_DATABASE || !DATABASE_URL) {
+  throw new Error('❌ Database not enabled or DATABASE_URL missing.');
 }
 
-/**
- * Optional helper for legacy imports that expected getPool()
- */
+export const pool: Pool = new Pool({
+  connectionString: DATABASE_URL,
+  ssl: DATABASE_URL.includes('localhost')
+    ? false
+    : { rejectUnauthorized: false },
+  max: parseInt(process.env.DB_MAX_CONNECTIONS || '10'),
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 10000,
+});
+
+pool.on('connect', () => console.log('✅ Connected to Postgres'));
+pool.on('error', (err: Error) =>
+  console.error('Database pool error:', err.message)
+);
+
+// Optional helper for legacy imports
 export function getPool(): Pool {
-  if (!pool) throw new Error('Database pool is not initialized');
   return pool;
 }
