@@ -12,6 +12,8 @@ import bubbleSyncRouter from './routes/bubbleSync.js';
 import healthRouter from './routes/health.js';
 import { bubbleSummarySync } from './workers/bubbleSummarySync.js';
 import { deviceStatusRouter } from './routes/deviceStatus.js';
+import { heartbeatWorker } from './workers/heartbeatWorker.js';
+
 
 
 dotenv.config();
@@ -78,6 +80,13 @@ app.get('/workers/run-all', async (_req, res) => {
 
   res.json({ ok: true, message: 'Full data pipeline completed' });
 });
+
+app.get('/workers/heartbeat', async (_req, res) => {
+  if (!pool) return res.status(503).json({ error: 'DB not connected' });
+  const result = await heartbeatWorker(pool);
+  res.json({ ok: true, result });
+});
+
 
 // ===== START SERVER =====
 async function start() {
