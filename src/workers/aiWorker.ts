@@ -7,7 +7,7 @@ const BUBBLE_AI_URL =
 
 const DEFAULT_EXPECTED_MULTIPLIER = parseFloat(process.env.FILTER_EXPECTED_MULTIPLIER || '3.0');
 
-export async function aiWorker(pool: Pool) {
+export async function runAIWorker(pool: Pool) {
   console.log('🧠 Starting AI Worker (rule-based prediction)...');
 
   const query = `
