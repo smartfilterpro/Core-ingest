@@ -1,0 +1,10 @@
+name: Daily Ingest Run
+on:
+  schedule:
+    - cron: "0 5 * * *"  # daily 5 AM UTC
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Core Ingest Pipeline
+        run: curl -s https://core-ingest-ingest.up.railway.app/workers/run-all
