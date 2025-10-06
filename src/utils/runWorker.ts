@@ -3,35 +3,50 @@ import { Pool } from 'pg';
 export async function runWorker(
   pool: Pool,
   workerName: string,
-  workerFn: (pool: Pool) => Promise<void>
+  workerFn: (pool: Pool) => Promise<any>
 ) {
   const startTime = Date.now();
-  console.log(`⚙️  Starting worker: ${workerName}...`);
+  console.log(`⚙️ Starting worker: ${workerName}`);
 
-  let success = false;
-  let errorMessage: string | null = null;
+  const { rows } = await pool.query(
+    `INSERT INTO worker_runs (worker_name, started_at, status)
+     VALUES ($1, NOW(), 'running')
+     RETURNING id`,
+    [workerName]
+  );
+  const runId = rows[0].id;
 
   try {
-    await workerFn(pool);
-    success = true;
-  } catch (err: any) {
-    errorMessage = err.message;
-    console.error(`❌ Worker ${workerName} failed:`, err.message);
-  } finally {
+    const result = await workerFn(pool);
     const duration = (Date.now() - startTime) / 1000;
-    try {
-      await pool.query(
-        `INSERT INTO worker_runs (worker_name, started_at, finished_at, duration_seconds, success, error_message)
-         VALUES ($1, NOW(), NOW(), $2, $3, $4)`,
-        [workerName, duration, success, errorMessage]
-      );
-      console.log(
-        `🕒 Worker run logged: ${workerName} (${duration.toFixed(2)}s, success=${success})`
-      );
-    } catch (logErr: any) {
-      console.error(`⚠️  Failed to log worker run for ${workerName}:`, logErr.message);
-    }
-  }
+    const success = result?.success !== false;
 
-  if (success) console.log(`✅ Worker ${workerName} completed successfully.`);
+    await pool.query(
+      `UPDATE worker_runs
+       SET completed_at = NOW(),
+           status = 'success',
+           devices_processed = COALESCE($2, 0),
+           success_count = COALESCE($3, 0),
+           fail_count = COALESCE($4, 0),
+           duration_seconds = $5,
+           success = $6
+       WHERE id = $1`,
+      [runId, result?.devices_processed, result?.success_count, result?.fail_count, duration, success]
+    );
+
+    console.log(`✅ Worker ${workerName} finished in ${duration.toFixed(2)}s`);
+  } catch (err: any) {
+    const duration = (Date.now() - startTime) / 1000;
+    console.error(`❌ Worker ${workerName} failed:`, err.message);
+
+    await pool.query(
+      `UPDATE worker_runs
+       SET completed_at = NOW(),
+           status = 'failed',
+           duration_seconds = $2,
+           success = false
+       WHERE id = $1`,
+      [runId, duration]
+    );
+  }
 }
