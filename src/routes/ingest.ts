@@ -86,6 +86,26 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
       // ✅ Insert into equipment_events table
       await client.query(
         `
+        UPDATE devices
+        SET
+          last_mode = COALESCE($2, last_mode),
+          last_is_cooling = CASE WHEN $3 IN ('COOLING') THEN TRUE ELSE FALSE END,
+          last_is_heating = CASE WHEN $3 IN ('HEATING') THEN TRUE ELSE FALSE END,
+          last_is_fan_only = CASE WHEN $4 = TRUE THEN TRUE ELSE FALSE END,
+          last_equipment_status = $3,
+          updated_at = NOW()
+        WHERE device_id = $1
+        `,
+        [
+          e.device_id,
+          e.event_type ?? null,
+          e.equipment_status ?? 'OFF',
+          e.equipment_status === 'FAN' || e.event_type?.includes('FAN'),
+        ]
+      );
+      
+      await client.query(
+        `
         INSERT INTO equipment_events (
           device_id,
           event_type,
