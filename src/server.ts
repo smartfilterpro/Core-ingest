@@ -69,17 +69,41 @@ app.post('/workers/bubble-sync', async (_req, res) => {
 });
 
 // ===== Combined "Run All" Worker =====
+// ===== Combined "Run All" Worker =====
 app.get('/workers/run-all', async (_req, res) => {
-  if (!pool) return res.status(503).json({ error: 'DB not connected' });
+  if (!pool) {
+    return res.status(503).json({ error: 'DB not connected' });
+  }
 
-  await runWorker(pool, 'sessionStitcher', sessionStitcher);
-  await runWorker(pool, 'summaryWorker', summaryWorker);
-  await runWorker(pool, 'regionAggregationWorker', regionAggregationWorker);
-  await runWorker(pool, 'aiWorker', aiWorker);
-  await bubbleSummarySync();
+  try {
+    console.log('🚀 Starting full data pipeline...');
 
-  res.json({ ok: true, message: 'Full data pipeline completed' });
+    // 1️⃣ Session Stitcher → create runtime_sessions from equipment_events
+    await runWorker(pool, 'sessionStitcher', sessionStitcher);
+
+    // 2️⃣ Daily Summary → aggregate runtime_sessions into summaries_daily
+    await runWorker(pool, 'summaryWorker', summaryWorker);
+
+    // 3️⃣ Regional Aggregation → create region_averages from summaries_daily
+    await runWorker(pool, 'regionAggregationWorker', regionAggregationWorker);
+
+    // 4️⃣ AI Worker → generate predictions in ai_predictions
+    await runWorker(pool, 'aiWorker', aiWorker);
+
+    // 5️⃣ Bubble Sync → send daily summaries back to Bubble.io
+    await bubbleSummarySync();
+
+    // 6️⃣ Heartbeat Worker → mark devices offline if inactive > 60 mins
+    await heartbeatWorker(pool);
+
+    console.log('✅ Full data pipeline completed.');
+    res.json({ ok: true, message: 'Full data pipeline completed' });
+  } catch (err: any) {
+    console.error('[Run-All Error]', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
 });
+
 
 app.get('/workers/heartbeat', async (_req, res) => {
   if (!pool) return res.status(503).json({ error: 'DB not connected' });
