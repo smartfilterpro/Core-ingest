@@ -14,6 +14,8 @@ import { bubbleSummarySync } from './workers/bubbleSummarySync.js';
 import { deviceStatusRouter } from './routes/deviceStatus.js';
 import { heartbeatWorker } from './workers/heartbeatWorker.js';
 import { workerLogsRouter } from './routes/workerLogs.js';
+import { sessionStitcher } from './workers/sessionStitcher';
+
 
 
 
