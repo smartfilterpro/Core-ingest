@@ -1,6 +1,6 @@
 import { Pool } from 'pg';
 
-export async function summaryWorker(pool: Pool) {
+export async function runSummaryWorker(pool: Pool) {
   console.log('📊 Starting enhanced daily summary worker...');
 
   const query = `
