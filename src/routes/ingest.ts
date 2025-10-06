@@ -41,11 +41,10 @@ ingestRouter.post('/v1/events:batch', async (req, res) => {
 
       // Ensure device record exists / updated
       await db.query(`
-        INSERT INTO devices (device_id, created_at, updated_at)
-        VALUES ($1, NOW(), NOW())
-        ON CONFLICT (device_id)
-        DO UPDATE SET updated_at = NOW()
-      `, [e.device_id]);
+        INSERT INTO devices (device_id, created_at)
+        VALUES ($1, NOW())
+        ON CONFLICT (device_id) DO NOTHING
+    `, [e.device_id]);
     }
 
     res.json({ success: true, count: events.length });
