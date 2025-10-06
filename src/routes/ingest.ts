@@ -1,10 +1,10 @@
 import express from 'express';
 import { Pool } from 'pg';
-import { getPool } from '../db/pool';
+import { pool } from '../db/pool';
 export const ingestRouter = express.Router();
 
 ingestRouter.post('/v1/events:batch', async (req, res) => {
-  const pool: Pool = getPool();
+  const db = pool;
   const events = req.body.events || [];
 
   if (!Array.isArray(events)) {
