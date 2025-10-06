@@ -11,6 +11,8 @@ import filterResetRouter from './routes/filterReset.js';
 import bubbleSyncRouter from './routes/bubbleSync.js';
 import healthRouter from './routes/health.js';
 import { bubbleSummarySync } from './workers/bubbleSummarySync.js';
+import { deviceStatusRouter } from './routes/deviceStatus.js';
+
 
 dotenv.config();
 
@@ -24,6 +26,8 @@ app.use('/ingest', ingestRouter);
 app.use('/filter-reset', filterResetRouter);
 app.use('/bubble', bubbleSyncRouter);
 app.use('/health', healthRouter);
+app.use('/ingest', deviceStatusRouter);  // ✅ new
+
 
 // ===== WORKERS =====
 app.get('/workers/session-stitch', async (_req, res) => {
