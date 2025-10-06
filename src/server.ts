@@ -2,7 +2,7 @@ import express from 'express';
 import dotenv from 'dotenv';
 import { pool } from './db/pool.js'; // ✅ Use shared pool
 import { runWorker } from './utils/runWorker.js';
-import { sessionStitcher } from './workers/sessionStitcher.js';
+import { runSessionStitcher } from './workers/sessionStitcher';
 import { summaryWorker } from './workers/summaryWorker.js';
 import { regionAggregationWorker } from './workers/regionAggregationWorker.js';
 import { aiWorker } from './workers/aiWorker.js';
@@ -14,7 +14,7 @@ import { bubbleSummarySync } from './workers/bubbleSummarySync.js';
 import { deviceStatusRouter } from './routes/deviceStatus.js';
 import { heartbeatWorker } from './workers/heartbeatWorker.js';
 import { workerLogsRouter } from './routes/workerLogs.js';
-import { sessionStitcher } from './workers/sessionStitcher';
+
 
 
 
