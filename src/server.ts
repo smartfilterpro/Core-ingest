@@ -13,6 +13,8 @@ import healthRouter from './routes/health.js';
 import { bubbleSummarySync } from './workers/bubbleSummarySync.js';
 import { deviceStatusRouter } from './routes/deviceStatus.js';
 import { heartbeatWorker } from './workers/heartbeatWorker.js';
+import { workerLogsRouter } from './routes/workerLogs.js';
+
 
 
 
@@ -29,6 +31,8 @@ app.use('/filter-reset', filterResetRouter);
 app.use('/bubble', bubbleSyncRouter);
 app.use('/health', healthRouter);
 app.use('/ingest', deviceStatusRouter);  // ✅ new
+app.use('/workers', workerLogsRouter);
+
 
 
 // ===== WORKERS =====
