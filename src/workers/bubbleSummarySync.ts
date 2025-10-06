@@ -1,5 +1,5 @@
 import { Pool } from 'pg';
-import axios from 'axios';
+import axios, { AxiosResponse } from 'axios';
 import dotenv from 'dotenv';
 dotenv.config();
 
@@ -15,13 +15,17 @@ const BUBBLE_SYNC_URL =
   'https://smartfilterpro-scaling.bubbleapps.io/version-test/api/1.1/wf/core_ingest_summary';
 
 // Simple exponential backoff retry
-async function postWithRetry(payload: any, retries = 3, delayMs = 2000) {
+async function postWithRetry(
+  payload: any,
+  retries = 3,
+  delayMs = 2000
+): Promise<AxiosResponse<any>> {
   let attempt = 0;
   while (attempt <= retries) {
     try {
       const res = await axios.post(BUBBLE_SYNC_URL, payload, {
         headers: { 'Content-Type': 'application/json' },
-        timeout: 10000, // 10s per request
+        timeout: 10000,
       });
       return res;
     } catch (err: any) {
@@ -37,6 +41,7 @@ async function postWithRetry(payload: any, retries = 3, delayMs = 2000) {
       await new Promise((r) => setTimeout(r, wait));
     }
   }
+  throw new Error('postWithRetry exited without returning'); // satisfies TS
 }
 
 export async function bubbleSummarySync() {
@@ -62,7 +67,11 @@ export async function bubbleSummarySync() {
 
       try {
         const res = await postWithRetry(payload, 3, 2000);
-        console.log(`[bubbleSummarySync] Synced ${row.device_id} (${row.date}) → ${res.status}`);
+        if (res) {
+          console.log(
+            `[bubbleSummarySync] Synced ${row.device_id} (${row.date}) → ${res.status}`
+          );
+        }
         successCount++;
       } catch (err: any) {
         console.error(`[bubbleSummarySync] Failed ${row.device_id}:`, err.message);
