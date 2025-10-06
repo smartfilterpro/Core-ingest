@@ -1,10 +1,11 @@
 import express from 'express';
 import { Pool } from 'pg';
-import { pool } from '../db/pool';
+import { pool } from '../db/pool'; // ✅ fixed import
+
 export const ingestRouter = express.Router();
 
 ingestRouter.post('/v1/events:batch', async (req, res) => {
-  const db = pool;
+  const db: Pool = pool;
   const events = req.body.events || [];
 
   if (!Array.isArray(events)) {
@@ -13,7 +14,7 @@ ingestRouter.post('/v1/events:batch', async (req, res) => {
 
   try {
     for (const e of events) {
-      await pool.query(`
+      await db.query(`
         INSERT INTO equipment_events (
           device_id,
           event_type,
@@ -39,7 +40,7 @@ ingestRouter.post('/v1/events:batch', async (req, res) => {
       ]);
 
       // Ensure device record exists / updated
-      await pool.query(`
+      await db.query(`
         INSERT INTO devices (device_id, created_at, updated_at)
         VALUES ($1, NOW(), NOW())
         ON CONFLICT (device_id)
