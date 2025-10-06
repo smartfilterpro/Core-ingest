@@ -29,7 +29,7 @@ app.get('/health', async (_req, res) => {
   }
 });
 
-// ✅ Ingest routes (mounted at /ingest)
+// ✅ Mount ingest routes
 app.use('/ingest', ingestRouter);
 
 // ✅ Worker endpoints
@@ -41,13 +41,13 @@ app.get('/workers/run-all', async (_req, res) => {
     const sessionResult = await runSessionStitcher();
     results.push({ worker: 'sessionStitcher', result: sessionResult });
 
-    const summaryResult = await runSummaryWorker();
+    const summaryResult = await runSummaryWorker(pool);
     results.push({ worker: 'summaryWorker', result: summaryResult });
 
-    const regionResult = await runRegionAggregationWorker();
+    const regionResult = await runRegionAggregationWorker(pool);
     results.push({ worker: 'regionAggregationWorker', result: regionResult });
 
-    const aiResult = await runAIWorker();
+    const aiResult = await runAIWorker(pool);
     results.push({ worker: 'aiWorker', result: aiResult });
 
     res.status(200).json({ ok: true, results });
@@ -57,31 +57,31 @@ app.get('/workers/run-all', async (_req, res) => {
   }
 });
 
-// ✅ Individual worker routes
+// ✅ Individual worker endpoints (for debugging)
 app.get('/workers/session-stitcher', async (_req, res) => {
   const result = await runSessionStitcher();
   res.status(result.ok ? 200 : 500).json(result);
 });
 
 app.get('/workers/summary', async (_req, res) => {
-  const result = await runSummaryWorker();
-  res.status(result.ok ? 200 : 500).json(result);
+  const result = await runSummaryWorker(pool);
+  res.status(200).json({ ok: true, result });
 });
 
 app.get('/workers/region', async (_req, res) => {
-  const result = await runRegionAggregationWorker();
-  res.status(result.ok ? 200 : 500).json(result);
+  const result = await runRegionAggregationWorker(pool);
+  res.status(200).json({ ok: true, result });
 });
 
 app.get('/workers/ai', async (_req, res) => {
-  const result = await runAIWorker();
-  res.status(result.ok ? 200 : 500).json(result);
+  const result = await runAIWorker(pool);
+  res.status(200).json({ ok: true, result });
 });
 
-// ✅ Start server after ensuring schema
+// ✅ Initialize schema and start server
 (async () => {
   try {
-    await ensureSchema(pool); // <-- Fixed argument
+    await ensureSchema(pool);
     console.log('✅ Database schema verified.');
   } catch (err: any) {
     console.error('❌ Error ensuring schema:', err.message);
