@@ -23,6 +23,30 @@ export const ingestRouter = express.Router();
  * ]
  */
 
+/**
+ * PATCH/POST from Bubble to update device settings
+ */
+ingestRouter.post('/update-device', async (req, res) => {
+  const { device_id, use_forced_air_for_heat } = req.body;
+  if (!device_id) {
+    return res.status(400).json({ ok: false, error: 'Missing device_id' });
+  }
+
+  try {
+    await pool.query(
+      `UPDATE devices
+       SET use_forced_air_for_heat = $2, updated_at = NOW()
+       WHERE device_id = $1`,
+      [device_id, use_forced_air_for_heat]
+    );
+    console.log(`[ingest] Updated device ${device_id} forcedAir=${use_forced_air_for_heat}`);
+    return res.json({ ok: true });
+  } catch (err: any) {
+    console.error('[ingest] update-device error:', err.message);
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
   const events = Array.isArray(req.body) ? req.body : [req.body];
   const client = await pool.connect();
