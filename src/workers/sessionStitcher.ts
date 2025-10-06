@@ -45,4 +45,14 @@ export async function sessionStitcher(pool: Pool) {
       CASE 
         WHEN t.prev_equipment_status = 'HEATING' THEN 'HEAT'
         WHEN t.prev_equipment_status = 'COOLING' THEN 'COOL'
-        WHEN t.prev_equipment_status = '
+        WHEN t.prev_equipment_status = 'FAN' THEN 'FAN'
+        ELSE 'AUTO'
+      END AS last_mode,
+      NOW()
+    FROM transitions t
+    ON CONFLICT DO NOTHING;
+  `; // ✅ ← This closing backtick was missing
+
+  const result = await pool.query(query);
+  console.log(`✅ Session stitching complete. ${result.rowCount ?? 0} new sessions created.`);
+}
