@@ -1,20 +1,67 @@
-import express from 'express';
-import { Pool } from 'pg';
-import { pool } from '../db/pool'; // ✅ fixed import
+import express, { Request, Response } from 'express';
+import { pool } from '../db/pool';
 
 export const ingestRouter = express.Router();
 
-ingestRouter.post('/v1/events:batch', async (req, res) => {
-  const db: Pool = pool;
-  const events = req.body.events || [];
+/**
+ * POST /ingest/v1/events:batch
+ * Accepts an array of normalized device events from vendor services (Nest, Ecobee, Resideo, etc.)
+ *
+ * Example payload:
+ * [
+ *   {
+ *     device_id: "abc123",
+ *     event_type: "COOL_ON",
+ *     is_active: true,
+ *     equipment_status: "COOLING",
+ *     temperature_f: 72,
+ *     temperature_c: 22.2,
+ *     runtime_seconds: null,
+ *     timestamp: "2025-10-06T12:34:56.000Z",
+ *     current_temp: 72
+ *   }
+ * ]
+ */
 
-  if (!Array.isArray(events)) {
-    return res.status(400).json({ ok: false, error: 'Invalid payload: expected events[]' });
-  }
+ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
+  const events = Array.isArray(req.body) ? req.body : [req.body];
+  const client = await pool.connect();
+  const insertedEvents: string[] = [];
 
   try {
+    await client.query('BEGIN');
+
     for (const e of events) {
-      await db.query(`
+      if (!e.device_id) continue;
+
+      // Ensure timestamp exists
+      const eventTimestamp =
+        e.timestamp && !isNaN(Date.parse(e.timestamp))
+          ? new Date(e.timestamp)
+          : new Date();
+
+      // ✅ Upsert into devices table
+      await client.query(
+        `
+        INSERT INTO devices (device_id, name, manufacturer, user_id)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (device_id) DO UPDATE
+        SET name = COALESCE(EXCLUDED.name, devices.name),
+            manufacturer = COALESCE(EXCLUDED.manufacturer, devices.manufacturer),
+            user_id = COALESCE(EXCLUDED.user_id, devices.user_id),
+            updated_at = NOW()
+        `,
+        [
+          e.device_id,
+          e.device_name ?? null,
+          e.manufacturer ?? 'Nest',
+          e.user_id ?? null,
+        ]
+      );
+
+      // ✅ Insert into equipment_events table
+      await client.query(
+        `
         INSERT INTO equipment_events (
           device_id,
           event_type,
@@ -24,32 +71,63 @@ ingestRouter.post('/v1/events:batch', async (req, res) => {
           temperature_c,
           runtime_seconds,
           event_timestamp,
+          current_temp,
           created_at
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW())
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
         ON CONFLICT DO NOTHING
-      `, [
-        e.device_id,
-        e.event_type,
-        e.is_active,
-        e.equipment_status,
-        e.temperature_f,
-        e.temperature_c,
-        e.runtime_seconds,
-        e.timestamp
-      ]);
+        `,
+        [
+          e.device_id,
+          e.event_type ?? null,
+          e.is_active ?? false,
+          e.equipment_status ?? 'OFF',
+          e.temperature_f ?? null,
+          e.temperature_c ?? null,
+          e.runtime_seconds ?? null,
+          eventTimestamp,
+          e.current_temp ?? e.temperature_f ?? null,
+        ]
+      );
 
-      // Ensure device record exists / updated
-      await db.query(`
-        INSERT INTO devices (device_id, created_at)
-        VALUES ($1, NOW())
-        ON CONFLICT (device_id) DO NOTHING
-    `, [e.device_id]);
+      insertedEvents.push(e.device_id);
     }
 
-    res.json({ success: true, count: events.length });
+    await client.query('COMMIT');
+    console.log(`[ingest] Inserted ${insertedEvents.length} event(s)`);
+
+    return res.status(200).json({
+      ok: true,
+      count: insertedEvents.length,
+    });
   } catch (err: any) {
-    console.error('[INGEST ERROR]', err);
-    res.status(500).json({ success: false, error: err.message });
+    await client.query('ROLLBACK');
+    console.error('[ingest] Error processing events batch:', err);
+    return res.status(500).json({
+      ok: false,
+      error: err.message || 'Unknown ingest error',
+    });
+  } finally {
+    client.release();
   }
 });
+
+/**
+ * Simple GET to verify ingest route health
+ */
+ingestRouter.get('/health', async (_req: Request, res: Response) => {
+  try {
+    const r = await pool.query(`SELECT NOW() AS now`);
+    return res.status(200).json({
+      ok: true,
+      db_time: r.rows[0].now,
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      ok: false,
+      error: err.message,
+    });
+  }
+});
+
+export default ingestRouter;
