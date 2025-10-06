@@ -1,128 +1,92 @@
 import express from 'express';
-import dotenv from 'dotenv';
-import { pool } from './db/pool.js'; // ✅ Use shared pool
-import { runWorker } from './utils/runWorker.js';
+import cors from 'cors';
+import bodyParser from 'body-parser';
+import { pool } from './db/pool';
+import { ensureSchema } from './db/ensureSchema';
+import ingestRouter from './routes/ingest';
 import { runSessionStitcher } from './workers/sessionStitcher';
-import { summaryWorker } from './workers/summaryWorker.js';
-import { regionAggregationWorker } from './workers/regionAggregationWorker.js';
-import { aiWorker } from './workers/aiWorker.js';
-import { ingestRouter } from './routes/ingest.js';
-import filterResetRouter from './routes/filterReset.js';
-import bubbleSyncRouter from './routes/bubbleSync.js';
-import healthRouter from './routes/health.js';
-import { bubbleSummarySync } from './workers/bubbleSummarySync.js';
-import { deviceStatusRouter } from './routes/deviceStatus.js';
-import { heartbeatWorker } from './workers/heartbeatWorker.js';
-import { workerLogsRouter } from './routes/workerLogs.js';
-
-
-
-
-
-
-dotenv.config();
+import { runSummaryWorker } from './workers/summaryWorker';
+import { runRegionAggregationWorker } from './workers/regionAggregationWorker';
+import { runAIWorker } from './workers/aiWorker';
 
 const app = express();
-app.use(express.json());
-
 const PORT = process.env.PORT || 8080;
 
-// ===== ROUTES =====
+// ✅ Middleware
+app.use(cors());
+app.use(bodyParser.json({ limit: '2mb' }));
+
+// ✅ Health check route
+app.get('/health', async (_req, res) => {
+  try {
+    const r = await pool.query('SELECT NOW() as now');
+    res.status(200).json({ ok: true, db_time: r.rows[0].now });
+  } catch (err: any) {
+    console.error('[server] Health check error:', err.message);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ✅ Ingest routes (mounted at /ingest)
 app.use('/ingest', ingestRouter);
-app.use('/filter-reset', filterResetRouter);
-app.use('/bubble', bubbleSyncRouter);
-app.use('/health', healthRouter);
-app.use('/ingest', deviceStatusRouter);  // ✅ new
-app.use('/workers', workerLogsRouter);
 
+// ✅ Worker endpoints
+app.get('/workers/run-all', async (_req, res) => {
+  console.log('[workers] Running all workers sequentially...');
+  const results: any[] = [];
 
+  try {
+    const sessionResult = await runSessionStitcher();
+    results.push({ worker: 'sessionStitcher', result: sessionResult });
 
-// ===== WORKERS =====
-app.get('/workers/session-stitch', async (_req, res) => {
-  if (!pool) return res.status(503).json({ error: 'DB not connected' });
-  await runWorker(pool, 'sessionStitcher', sessionStitcher);
-  res.json({ ok: true });
+    const summaryResult = await runSummaryWorker();
+    results.push({ worker: 'summaryWorker', result: summaryResult });
+
+    const regionResult = await runRegionAggregationWorker();
+    results.push({ worker: 'regionAggregationWorker', result: regionResult });
+
+    const aiResult = await runAIWorker();
+    results.push({ worker: 'aiWorker', result: aiResult });
+
+    res.status(200).json({ ok: true, results });
+  } catch (err: any) {
+    console.error('[workers/run-all] Error:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
 });
 
-app.get('/workers/daily-summary', async (_req, res) => {
-  if (!pool) return res.status(503).json({ error: 'DB not connected' });
-  await runWorker(pool, 'summaryWorker', summaryWorker);
-  res.json({ ok: true });
+// ✅ Single worker triggers
+app.get('/workers/session-stitcher', async (_req, res) => {
+  const result = await runSessionStitcher();
+  res.status(result.ok ? 200 : 500).json(result);
 });
 
-app.get('/workers/region-aggregate', async (_req, res) => {
-  if (!pool) return res.status(503).json({ error: 'DB not connected' });
-  await runWorker(pool, 'regionAggregationWorker', regionAggregationWorker);
-  res.json({ ok: true });
+app.get('/workers/summary', async (_req, res) => {
+  const result = await runSummaryWorker();
+  res.status(result.ok ? 200 : 500).json(result);
+});
+
+app.get('/workers/region', async (_req, res) => {
+  const result = await runRegionAggregationWorker();
+  res.status(result.ok ? 200 : 500).json(result);
 });
 
 app.get('/workers/ai', async (_req, res) => {
-  if (!pool) return res.status(503).json({ error: 'DB not connected' });
-  await runWorker(pool, 'aiWorker', aiWorker);
-  res.json({ ok: true });
+  const result = await runAIWorker();
+  res.status(result.ok ? 200 : 500).json(result);
 });
 
-// ✅ Bubble Summary Sync Worker
-app.post('/workers/bubble-sync', async (_req, res) => {
-  if (!pool) return res.status(503).json({ error: 'DB not connected' });
+// ✅ Initialize database schema before starting
+(async () => {
   try {
-    const result = await bubbleSummarySync();
-    res.json({ ok: true, result });
+    await ensureSchema();
+    console.log('✅ Database schema verified.');
   } catch (err: any) {
-    console.error('[bubbleSummarySync] Error:', err);
-    res.status(500).json({ ok: false, error: err.message });
-  }
-});
-
-// ===== Combined "Run All" Worker =====
-// ===== Combined "Run All" Worker =====
-app.get('/workers/run-all', async (_req, res) => {
-  if (!pool) {
-    return res.status(503).json({ error: 'DB not connected' });
+    console.error('❌ Error ensuring schema:', err.message);
+    process.exit(1);
   }
 
-  try {
-    console.log('🚀 Starting full data pipeline...');
-
-    // 1️⃣ Session Stitcher → create runtime_sessions from equipment_events
-    await runWorker(pool, 'sessionStitcher', sessionStitcher);
-
-    // 2️⃣ Daily Summary → aggregate runtime_sessions into summaries_daily
-    await runWorker(pool, 'summaryWorker', summaryWorker);
-
-    // 3️⃣ Regional Aggregation → create region_averages from summaries_daily
-    await runWorker(pool, 'regionAggregationWorker', regionAggregationWorker);
-
-    // 4️⃣ AI Worker → generate predictions in ai_predictions
-    await runWorker(pool, 'aiWorker', aiWorker);
-
-    // 5️⃣ Bubble Sync → send daily summaries back to Bubble.io
-    await bubbleSummarySync();
-
-    // 6️⃣ Heartbeat Worker → mark devices offline if inactive > 60 mins
-    await heartbeatWorker(pool);
-
-    console.log('✅ Full data pipeline completed.');
-    res.json({ ok: true, message: 'Full data pipeline completed' });
-  } catch (err: any) {
-    console.error('[Run-All Error]', err);
-    res.status(500).json({ ok: false, error: err.message });
-  }
-});
-
-
-app.get('/workers/heartbeat', async (_req, res) => {
-  if (!pool) return res.status(503).json({ error: 'DB not connected' });
-  const result = await heartbeatWorker(pool);
-  res.json({ ok: true, result });
-});
-
-
-// ===== START SERVER =====
-async function start() {
   app.listen(PORT, () => {
-    console.log(`🧠 SmartFilterPro Core Ingest Service running on port ${PORT}`);
+    console.log(`🚀 SmartFilterPro Core Ingest Service running on port ${PORT}`);
   });
-}
-
-start();
+})();
