@@ -1,6 +1,6 @@
 import express from 'express';
 import dotenv from 'dotenv';
-import { Pool } from 'pg';
+import { pool } from './db/pool.js'; // ✅ Use shared pool
 import { runWorker } from './utils/runWorker.js';
 import { sessionStitcher } from './workers/sessionStitcher.js';
 import { summaryWorker } from './workers/summaryWorker.js';
@@ -10,7 +10,7 @@ import { ingestRouter } from './routes/ingest.js';
 import filterResetRouter from './routes/filterReset.js';
 import bubbleSyncRouter from './routes/bubbleSync.js';
 import healthRouter from './routes/health.js';
-import { bubbleSummarySync } from './workers/bubbleSummarySync.js'; // ✅ NEW
+import { bubbleSummarySync } from './workers/bubbleSummarySync.js';
 
 dotenv.config();
 
@@ -18,24 +18,6 @@ const app = express();
 app.use(express.json());
 
 const PORT = process.env.PORT || 8080;
-const ENABLE_DATABASE = process.env.ENABLE_DATABASE !== '0';
-const DATABASE_URL = process.env.DATABASE_URL;
-
-let pool: Pool | null = null;
-
-if (ENABLE_DATABASE && DATABASE_URL) {
-  pool = new Pool({
-    connectionString: DATABASE_URL,
-    ssl: DATABASE_URL.includes('localhost') ? false : { rejectUnauthorized: false },
-    max: parseInt(process.env.DB_MAX_CONNECTIONS || '10'),
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 10000,
-  });
-
-  pool.on('error', (err) => {
-    console.error('Database pool error:', err.message);
-  });
-}
 
 // ===== ROUTES =====
 app.use('/ingest', ingestRouter);
@@ -68,7 +50,7 @@ app.get('/workers/ai', async (_req, res) => {
   res.json({ ok: true });
 });
 
-// ✅ NEW: Bubble Summary Sync Worker (Core → Bubble)
+// ✅ Bubble Summary Sync Worker
 app.post('/workers/bubble-sync', async (_req, res) => {
   if (!pool) return res.status(503).json({ error: 'DB not connected' });
   try {
@@ -88,7 +70,7 @@ app.get('/workers/run-all', async (_req, res) => {
   await runWorker(pool, 'summaryWorker', summaryWorker);
   await runWorker(pool, 'regionAggregationWorker', regionAggregationWorker);
   await runWorker(pool, 'aiWorker', aiWorker);
-  await bubbleSummarySync(); // ✅ Added here for automatic Bubble sync
+  await bubbleSummarySync();
 
   res.json({ ok: true, message: 'Full data pipeline completed' });
 });
