@@ -2,6 +2,9 @@ import { Pool } from 'pg';
 
 const OFFLINE_THRESHOLD_MINUTES = parseInt(process.env.OFFLINE_THRESHOLD_MINUTES || '60');
 
+/**
+ * Marks devices as offline if they haven't checked in within OFFLINE_THRESHOLD_MINUTES.
+ */
 export async function heartbeatWorker(pool: Pool) {
   console.log(`💓 Starting Heartbeat Worker (threshold: ${OFFLINE_THRESHOLD_MINUTES} minutes)...`);
 
