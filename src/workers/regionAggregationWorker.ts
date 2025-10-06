@@ -8,7 +8,7 @@ const REGION_AGG_LOOKBACK_DAYS = parseInt(process.env.REGION_AGG_LOOKBACK_DAYS |
  * Aggregates recent summaries by ZIP prefix into region_averages,
  * and syncs results to Bubble (if configured).
  */
-export async function regionAggregationWorker(pool: Pool) {
+export async function runRegionAggregationWorker(pool: Pool) {
   console.log('🌎 Starting Region Aggregation Worker...');
 
   const query = `
