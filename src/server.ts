@@ -4,6 +4,8 @@ import bodyParser from 'body-parser';
 import { pool } from './db/pool';
 import { ensureSchema } from './db/ensureSchema';
 import ingestRouter from './routes/ingest';
+
+// ✅ Standardized worker imports
 import { runSessionStitcher } from './workers/sessionStitcher';
 import { runSummaryWorker } from './workers/summaryWorker';
 import { runRegionAggregationWorker } from './workers/regionAggregationWorker';
@@ -55,7 +57,7 @@ app.get('/workers/run-all', async (_req, res) => {
   }
 });
 
-// ✅ Single worker triggers
+// ✅ Individual worker routes
 app.get('/workers/session-stitcher', async (_req, res) => {
   const result = await runSessionStitcher();
   res.status(result.ok ? 200 : 500).json(result);
@@ -76,10 +78,10 @@ app.get('/workers/ai', async (_req, res) => {
   res.status(result.ok ? 200 : 500).json(result);
 });
 
-// ✅ Initialize database schema before starting
+// ✅ Start server after ensuring schema
 (async () => {
   try {
-    await ensureSchema();
+    await ensureSchema(pool); // <-- Fixed argument
     console.log('✅ Database schema verified.');
   } catch (err: any) {
     console.error('❌ Error ensuring schema:', err.message);
