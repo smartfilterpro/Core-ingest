@@ -16,13 +16,30 @@ async function runMigrations() {
       );
     `);
 
-    const dir = path.join(__dirname, "db/migrations");
+    // Try multiple possible migration paths
+    let dir = path.join(__dirname, "db/migrations");
+    
+    // If running from dist/, try that path first
+    if (!fs.existsSync(dir)) {
+      dir = path.join(__dirname, "../src/db/migrations");
+    }
+    
+    // If still not found, try project root
+    if (!fs.existsSync(dir)) {
+      dir = path.join(process.cwd(), "src/db/migrations");
+    }
     
     // Check if migrations directory exists
     if (!fs.existsSync(dir)) {
-      console.log("[Migrations] No migrations directory found, skipping...");
+      console.log("[Migrations] No migrations directory found at:", dir);
+      console.log("[Migrations] Tried paths:");
+      console.log("  - ", path.join(__dirname, "db/migrations"));
+      console.log("  - ", path.join(__dirname, "../src/db/migrations"));
+      console.log("  - ", path.join(process.cwd(), "src/db/migrations"));
       return;
     }
+    
+    console.log("[Migrations] Using migrations from:", dir);
 
     const files = fs
       .readdirSync(dir)
