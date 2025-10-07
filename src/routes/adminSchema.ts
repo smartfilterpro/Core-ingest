@@ -1,132 +1,104 @@
-/**
- * SmartFilterPro — Core Ingest Admin Schema
- * Ensures database tables and constraints are created for the Core Ingest service.
- */
+import express, { Request, Response } from 'express';
+import { pool } from '../db/pool';
 
-import { pool } from './pool';
+const router = express.Router();
 
-export async function ensureAdminSchema() {
-  const client = await pool.connect();
+router.post('/fix-equipment-events', async (_req: Request, res: Response) => {
   try {
-    console.log('[schema] Ensuring core tables and constraints...');
-
-    // ========== DEVICES ==========
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS devices (
-        device_key UUID PRIMARY KEY,
-        device_id TEXT UNIQUE,
-        workspace_id TEXT,
-        device_name TEXT,
-        manufacturer TEXT,
-        model TEXT,
-        source TEXT,
-        connection_source TEXT,
-        zip_code_prefix TEXT,
-        timezone TEXT,
-        firmware_version TEXT,
-        last_mode TEXT,
-        last_equipment_status TEXT,
-        last_is_cooling BOOLEAN DEFAULT false,
-        last_is_heating BOOLEAN DEFAULT false,
-        last_is_fan_only BOOLEAN DEFAULT false,
-        last_temperature DECIMAL,
-        last_humidity DECIMAL,
-        last_heat_setpoint DECIMAL,
-        last_cool_setpoint DECIMAL,
-        use_forced_air_for_heat BOOLEAN DEFAULT false,
-        filter_target_hours INTEGER DEFAULT 100,
-        filter_usage_percent DECIMAL(5,2) DEFAULT 0,
-        created_at TIMESTAMP DEFAULT NOW(),
-        updated_at TIMESTAMP DEFAULT NOW()
-      );
+    // Step 1: Drop the existing default
+    await pool.query(`
+      ALTER TABLE equipment_events 
+      ALTER COLUMN id DROP DEFAULT;
     `);
-
-    // ========== EQUIPMENT_EVENTS ==========
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS equipment_events (
-        id UUID PRIMARY KEY,
-        device_key UUID REFERENCES devices(device_key) ON DELETE CASCADE,
-        source_event_id TEXT,
-        event_type TEXT,
-        is_active BOOLEAN,
-        equipment_status TEXT,
-        previous_status TEXT,
-        temperature_f DECIMAL,
-        temperature_c DECIMAL,
-        humidity DECIMAL,
-        outdoor_temperature_f DECIMAL,
-        outdoor_humidity DECIMAL,
-        heat_setpoint_f DECIMAL,
-        cool_setpoint_f DECIMAL,
-        runtime_seconds INTEGER,
-        recorded_at TIMESTAMP DEFAULT NOW(),
-        source_vendor TEXT,
-        payload_raw JSONB,
-        created_at TIMESTAMP DEFAULT NOW()
-      );
+    
+    // Step 2: Change type to UUID
+    await pool.query(`
+      ALTER TABLE equipment_events 
+      ALTER COLUMN id TYPE UUID USING gen_random_uuid();
     `);
-
-    // ✅ Ensure dedupe safety
-    await client.query(`
-      DO $$
-      BEGIN
-        IF NOT EXISTS (
-          SELECT 1 FROM pg_constraint WHERE conname = 'unique_device_event'
-        ) THEN
-          ALTER TABLE equipment_events
-          ADD CONSTRAINT unique_device_event UNIQUE (device_key, source_event_id);
-        END IF;
-      END
-      $$;
+    
+    // Step 3: Set new UUID default
+    await pool.query(`
+      ALTER TABLE equipment_events 
+      ALTER COLUMN id SET DEFAULT gen_random_uuid();
     `);
-
-    // ✅ Improve performance
-    await client.query(`
-      CREATE INDEX IF NOT EXISTS idx_equipment_events_device_event
-      ON equipment_events (device_key, recorded_at DESC);
+    
+    // Step 4: Add recorded_at if missing
+    await pool.query(`
+      ALTER TABLE equipment_events 
+      ADD COLUMN IF NOT EXISTS recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
     `);
-
-    // ========== SUMMARIES_DAILY ==========
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS summaries_daily (
-        id UUID PRIMARY KEY,
-        device_key UUID REFERENCES devices(device_key) ON DELETE CASCADE,
-        summary_date DATE,
-        total_runtime_seconds INTEGER DEFAULT 0,
-        total_cooling_seconds INTEGER DEFAULT 0,
-        total_heating_seconds INTEGER DEFAULT 0,
-        total_fan_seconds INTEGER DEFAULT 0,
-        created_at TIMESTAMP DEFAULT NOW(),
-        updated_at TIMESTAMP DEFAULT NOW()
-      );
-    `);
-
-    // ========== REGION_AVERAGES ==========
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS region_averages (
-        region_prefix TEXT PRIMARY KEY,
-        avg_runtime_seconds INTEGER DEFAULT 0,
-        avg_filter_life_percent DECIMAL(5,2) DEFAULT 0,
-        sample_size INTEGER DEFAULT 0,
-        updated_at TIMESTAMP DEFAULT NOW()
-      );
-    `);
-
-    // ========== DEVICE_STATES (optional historical log) ==========
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS device_states (
-        id UUID PRIMARY KEY,
-        device_key UUID REFERENCES devices(device_key) ON DELETE CASCADE,
-        state JSONB,
-        recorded_at TIMESTAMP DEFAULT NOW()
-      );
-    `);
-
-    console.log('[schema] ✅ All core tables and indexes ensured.');
-    console.log('[schema] No schema change required for OFF resets — handled in ingest logic.');
+    
+    res.json({ 
+      ok: true, 
+      message: 'equipment_events schema fixed - id is now UUID, recorded_at added' 
+    });
   } catch (err: any) {
-    console.error('[schema] ❌ Error ensuring schema:', err.message);
-  } finally {
-    client.release();
+    res.status(500).json({ ok: false, error: err.message });
   }
-}
+});
+
+router.post('/add-unique-constraints', async (_req: Request, res: Response) => {
+  try {
+    // Add unique constraint to source_event_id
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_equipment_events_source_event_id 
+      ON equipment_events(source_event_id) 
+      WHERE source_event_id IS NOT NULL;
+    `);
+    
+    res.json({ 
+      ok: true, 
+      message: 'Unique constraint added to source_event_id' 
+    });
+  } catch (err: any) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+router.post('/fix-unique-constraint', async (_req: Request, res: Response) => {
+  try {
+    // Drop the partial index
+    await pool.query(`
+      DROP INDEX IF EXISTS idx_equipment_events_source_event_id;
+    `);
+    
+    // Create a proper unique constraint (not partial)
+    await pool.query(`
+      ALTER TABLE equipment_events 
+      ADD CONSTRAINT equipment_events_source_event_id_unique 
+      UNIQUE (source_event_id);
+    `);
+    
+    res.json({ 
+      ok: true, 
+      message: 'Fixed: source_event_id now has proper unique constraint' 
+    });
+  } catch (err: any) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+router.post('/fix-observed-at', async (_req: Request, res: Response) => {
+  try {
+    // Make observed_at nullable OR add default
+    await pool.query(`
+      ALTER TABLE equipment_events 
+      ALTER COLUMN observed_at DROP NOT NULL;
+    `);
+    
+    await pool.query(`
+      ALTER TABLE equipment_events 
+      ALTER COLUMN observed_at SET DEFAULT NOW();
+    `);
+    
+    res.json({ 
+      ok: true, 
+      message: 'Fixed: observed_at now has default value' 
+    });
+  } catch (err: any) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+export default router;
