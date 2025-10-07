@@ -4,12 +4,12 @@
   "description": "SmartFilterPro Core Ingest Service — receives normalized runtime events, stitches sessions, and posts summaries to Bubble.io",
   "main": "dist/server.js",
   "type": "commonjs",
-  "scripts": {
-    "build": "tsc",
+ "scripts": {
+    "build": "tsc && npm run copy-migrations",
+    "copy-migrations": "mkdir -p dist/db/migrations && cp -r src/db/migrations/*.sql dist/db/migrations/ 2>/dev/null || true",
     "start": "node dist/server.js",
     "dev": "nodemon src/server.ts",
     "migrate": "ts-node src/runMigrations.ts",
-    "migrate:force": "ts-node -e \"require('./src/runMigrations').runMigrations().then(() => process.exit(0)).catch(() => process.exit(1))\"",
     "worker:session": "ts-node src/workers/sessionStitcher.ts",
     "worker:summary": "ts-node src/workers/summaryWorker.ts --run",
     "worker:summary:hourly": "ts-node src/workers/summaryWorker.ts --hourly",
