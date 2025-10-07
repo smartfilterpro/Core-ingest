@@ -4,6 +4,7 @@ import bodyParser from 'body-parser';
 import { pool } from './db/pool';
 import { ensureSchema } from './db/ensureSchema';
 import ingestRouter from './routes/ingest';
+import ingestV2Router from './routes/ingestV2';
 
 // ✅ Standardized worker imports
 import { runSessionStitcher } from './workers/sessionStitcher';
@@ -30,7 +31,8 @@ app.get('/health', async (_req, res) => {
 });
 
 // ✅ Mount ingest routes
-app.use('/ingest', ingestRouter);
+app.use('/ingest', ingestRouter);   // v1 legacy
+app.use('/ingest', ingestV2Router); // v2 universal
 
 // ✅ Worker endpoints
 app.get('/workers/run-all', async (_req, res) => {
