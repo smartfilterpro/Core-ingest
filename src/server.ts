@@ -2,24 +2,28 @@ import express from "express";
 import cors from "cors";
 import bodyParser from "body-parser";
 import { pool } from "./db/pool";
-import { ensureSchema } from "./db/ensureSchema";
 import ingestRouter from "./routes/ingest";
 import ingestV2Router from "./routes/ingestV2";
+import healthRouter from "./routes/health";
+import filterResetRouter from "./routes/filterReset";
+import bubbleSyncRouter from "./routes/bubbleSync";
+import usersRouter from "./routes/users";
+import { workerLogsRouter } from "./routes/workerLogs";
 import {
   runSessionStitcher,
   runSummaryWorker,
   runRegionAggregationWorker,
   runAIWorker,
-} from "./workers"; // optional central export
+} from "./workers";
 
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-// ✅ Middleware
+// Middleware
 app.use(cors());
 app.use(bodyParser.json({ limit: "5mb" }));
 
-// ✅ Health check
+// Health check
 app.get("/health", async (_req, res) => {
   try {
     const r = await pool.query("SELECT NOW() as now");
@@ -30,11 +34,16 @@ app.get("/health", async (_req, res) => {
   }
 });
 
-// ✅ Mount routers
+// Mount routers
 app.use("/ingest", ingestRouter);
 app.use("/ingest", ingestV2Router);
+app.use("/health", healthRouter);
+app.use("/filter-reset", filterResetRouter);
+app.use("/bubble-sync", bubbleSyncRouter);
+app.use("/users", usersRouter);
+app.use("/workers", workerLogsRouter);
 
-// ✅ Worker endpoints
+// Worker endpoints
 app.get("/workers/run-all", async (_req, res) => {
   console.log("[workers] Running all workers sequentially...");
   const results: any[] = [];
@@ -73,17 +82,8 @@ app.get("/workers/ai", async (_req, res) => {
   res.status(200).json({ ok: true, result });
 });
 
-// ✅ Initialize schema and start server
-(async () => {
-  try {
-    await ensureSchema(pool);
-    console.log("✅ Database schema verified.");
-  } catch (err: any) {
-    console.error("❌ Error ensuring schema:", err.message);
-    process.exit(1);
-  }
-
-  app.listen(PORT, () => {
-    console.log(`🚀 SmartFilterPro Core Ingest Service running on port ${PORT}`);
-  });
-})();
+// Start server
+app.listen(PORT, () => {
+  console.log(`[OK] SmartFilterPro Core Ingest Service running on port ${PORT}`);
+  console.log(`[OK] Database connected to Postgres`);
+});
