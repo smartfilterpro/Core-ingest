@@ -14,7 +14,7 @@
     "worker:summary:hourly": "ts-node src/workers/summaryWorker.ts --hourly",
     "worker:region": "ts-node src/workers/regionAggregationWorker.ts",
     "worker:ai": "ts-node src/workers/aiWorker.ts",
-    "postinstall": "npm install --omit=dev=false"
+    "postinstall": "pm run build"
   },
   "dependencies": {
     "axios": "^1.7.2",
