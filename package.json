@@ -9,12 +9,13 @@
     "start": "node dist/server.js",
     "dev": "nodemon src/server.ts",
     "migrate": "ts-node src/runMigrations.ts",
+    "migrate:force": "ts-node -e \"require('./src/runMigrations').runMigrations().then(() => process.exit(0)).catch(() => process.exit(1))\"",
     "worker:session": "ts-node src/workers/sessionStitcher.ts",
     "worker:summary": "ts-node src/workers/summaryWorker.ts --run",
     "worker:summary:hourly": "ts-node src/workers/summaryWorker.ts --hourly",
     "worker:region": "ts-node src/workers/regionAggregationWorker.ts",
     "worker:ai": "ts-node src/workers/aiWorker.ts",
-    "postinstall": "npm run build"
+    "postinstall": "npm run build && npm run migrate"
   },
   "dependencies": {
     "axios": "^1.7.2",
