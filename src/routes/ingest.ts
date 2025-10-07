@@ -11,7 +11,6 @@ export const ingestRouter = express.Router();
 ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
   let events: any[] = [];
 
-  // ✅ Handle multiple possible formats
   if (Array.isArray(req.body)) {
     events = req.body;
   } else if (req.body.events && Array.isArray(req.body.events)) {
@@ -25,25 +24,31 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
   const startTime = Date.now();
 
   try {
+    // 🆕  Incoming batch log header
+    console.log('\n📥 [ingest] Incoming batch:', events.length, 'event(s)');
+    for (const e of events) {
+      console.log(
+        `   ↳ ${e.source || 'unknown'} | ${e.device_id || e.device_key || 'no-id'} |` +
+        ` ${e.event_type || 'no-type'} | status=${e.equipment_status || 'unknown'} |` +
+        ` active=${e.is_active ?? 'n/a'} | temp=${e.temperature_f ?? e.temperature_c ?? '—'} |` +
+        ` runtime=${e.runtime_seconds ?? '—'}`
+      );
+    }
+
     await client.query('BEGIN');
 
     for (const e of events) {
-      // ✅ Basic validation
       if (!e.device_key && !e.device_id) {
         console.warn('[ingest] Skipping event with no device_key/device_id', e);
         continue;
       }
 
-      // Normalize vendor/source
       const source = (e.source || 'unknown').toLowerCase();
       const connection_source = (e.connection_source || 'unknown').toLowerCase();
 
-      // device_key is canonical UUID
-      // device_id is vendor-specific (nest:abc, ecobee:123)
       let device_key = e.device_key;
       const device_id = e.device_id || e.device_key;
 
-      // Lookup existing key if needed
       if (!device_key) {
         const lookup = await client.query(
           'SELECT device_key FROM devices WHERE device_id = $1',
@@ -57,23 +62,12 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
           ? new Date(e.timestamp)
           : new Date();
 
-      // ✅ UPSERT devices
       await client.query(
         `
         INSERT INTO devices (
-          device_key,
-          device_id,
-          workspace_id,
-          device_name,
-          manufacturer,
-          model,
-          source,
-          connection_source,
-          zip_code_prefix,
-          timezone,
-          firmware_version,
-          created_at,
-          updated_at
+          device_key, device_id, workspace_id, device_name, manufacturer, model,
+          source, connection_source, zip_code_prefix, timezone, firmware_version,
+          created_at, updated_at
         )
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW(),NOW())
         ON CONFLICT (device_key) DO UPDATE
@@ -100,7 +94,6 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
         ]
       );
 
-      // ✅ Update device current state
       await client.query(
         `
         UPDATE devices
@@ -138,31 +131,17 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
         ]
       );
 
-      // ✅ Insert into equipment_events (dedupe by device_key + source_event_id)
       await client.query(
         `
         INSERT INTO equipment_events (
-          id,
-          device_key,
-          source_event_id,
-          event_type,
-          is_active,
-          equipment_status,
-          previous_status,
-          temperature_f,
-          temperature_c,
-          humidity,
-          outdoor_temperature_f,
-          outdoor_humidity,
-          heat_setpoint_f,
-          cool_setpoint_f,
-          runtime_seconds,
-          recorded_at,
-          source_vendor,
-          payload_raw,
-          created_at
+          id, device_key, source_event_id, event_type, is_active,
+          equipment_status, previous_status, temperature_f, temperature_c,
+          humidity, outdoor_temperature_f, outdoor_humidity,
+          heat_setpoint_f, cool_setpoint_f, runtime_seconds,
+          recorded_at, source_vendor, payload_raw, created_at
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16 AT TIME ZONE 'UTC',$17,$18,NOW())
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
+                $16 AT TIME ZONE 'UTC',$17,$18,NOW())
         ON CONFLICT (device_key, source_event_id) DO NOTHING
         `,
         [
@@ -183,7 +162,7 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
           e.runtime_seconds || null,
           eventTimestamp,
           source,
-          e.payload_raw ? JSON.stringify(e.payload_raw) : null
+          e.payload_raw ? JSON.stringify(e.payload_raw).slice(0, 500) : null // 🆕 truncate
         ]
       );
 
@@ -192,8 +171,9 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
 
     await client.query('COMMIT');
 
+    // 🆕  Summary logging
     console.log(
-      `[ingest] ✅ Inserted ${insertedEvents.length} event(s) in ${
+      `📤 [ingest] ✅ Inserted ${insertedEvents.length} event(s) in ${
         Date.now() - startTime
       }ms`
     );
@@ -216,15 +196,12 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
 
 /**
  * PATCH /ingest/update-device
- * Updates device settings from Bubble
  */
 ingestRouter.post('/update-device', async (req, res) => {
   const { device_key, use_forced_air_for_heat } = req.body;
-
   if (!device_key) {
     return res.status(400).json({ ok: false, error: 'Missing device_key' });
   }
-
   try {
     await pool.query(
       `
@@ -234,7 +211,6 @@ ingestRouter.post('/update-device', async (req, res) => {
       `,
       [device_key, use_forced_air_for_heat]
     );
-
     console.log(`[ingest] Updated device ${device_key} forcedAir=${use_forced_air_for_heat}`);
     return res.json({ ok: true });
   } catch (err: any) {
