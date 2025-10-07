@@ -103,43 +103,39 @@ ingestV2Router.post('/v2/events:batch', async (req: Request, res: Response) => {
       );
 
       // ───────────── 4️⃣ Manage runtime_sessions transitions ─────────────
-      const prev = await client.query(
-        `SELECT session_id, started_at FROM runtime_sessions
-         WHERE device_key=$1 AND ended_at IS NULL
-         ORDER BY started_at DESC LIMIT 1`,
-        [e.device_key]
-      );
+      const prev = await client.query<{
+  session_id: string;
+  started_at: Date;
+}>(
+  `SELECT session_id, started_at FROM runtime_sessions
+   WHERE device_key=$1 AND ended_at IS NULL
+   ORDER BY started_at DESC LIMIT 1`,
+  [e.device_key]
+);
 
-      if (e.is_active && prev.rowCount === 0) {
-        await client.query(
-          `INSERT INTO runtime_sessions (device_key, session_id, started_at, mode, is_counted, created_at)
-           VALUES ($1,$2,$3,$4,TRUE,NOW())`,
-          [e.device_key, uuidv4(), ts, e.hvac_mode ?? e.equipment_status ?? 'UNKNOWN']
-        );
-      } else if (!e.is_active && prev.rowCount > 0) {
-        const session = prev.rows[0];
-        const runtimeSeconds = e.runtime_seconds ??
-          Math.round((ts.getTime() - new Date(session.started_at).getTime()) / 1000);
-        await client.query(
-          `UPDATE runtime_sessions
-           SET ended_at=$2, runtime_seconds=$3, updated_at=NOW()
-           WHERE session_id=$1`,
-          [session.session_id, ts, runtimeSeconds]
-        );
-      }
-    }
+const rowCount = prev?.rowCount ?? 0;
 
-    await client.query('COMMIT');
-    console.log(`[ingestV2] Inserted ${inserted} event(s).`);
-    res.status(200).json({ ok: true, count: inserted });
-  } catch (err: any) {
-    await client.query('ROLLBACK');
-    console.error('[ingestV2] Error:', err);
-    res.status(500).json({ ok: false, error: err.message });
-  } finally {
-    client.release();
-  }
-});
+if (e.is_active && rowCount === 0) {
+  // start new session
+  await client.query(
+    `INSERT INTO runtime_sessions (device_key, session_id, started_at, mode, is_counted, created_at)
+     VALUES ($1,$2,$3,$4,TRUE,NOW())`,
+    [e.device_key, uuidv4(), ts, e.hvac_mode ?? e.equipment_status ?? 'UNKNOWN']
+  );
+} else if (!e.is_active && rowCount > 0) {
+  const session = prev.rows[0];
+  const runtimeSeconds =
+    e.runtime_seconds ??
+    Math.round((ts.getTime() - new Date(session.started_at).getTime()) / 1000);
+
+  await client.query(
+    `UPDATE runtime_sessions
+     SET ended_at=$2, runtime_seconds=$3, updated_at=NOW()
+     WHERE session_id=$1`,
+    [session.session_id, ts, runtimeSeconds]
+  );
+}
+
 
 /** Health endpoint */
 ingestV2Router.get('/v2/health', async (_req, res) => {
