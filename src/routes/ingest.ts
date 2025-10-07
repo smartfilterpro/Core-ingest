@@ -18,7 +18,10 @@ export const ingestRouter = express.Router();
  *     temperature_c: 22.2,
  *     runtime_seconds: null,
  *     timestamp: "2025-10-06T12:34:56.000Z",
- *     current_temp: 72
+ *     current_temp: 72,
+ *     manufacturer: "Google Nest",
+ *     model: "Thermostat E",
+ *     connection_source: "nest"
  *   }
  * ]
  */
@@ -34,11 +37,14 @@ ingestRouter.post('/update-device', async (req, res) => {
 
   try {
     await pool.query(
-      `UPDATE devices
-       SET use_forced_air_for_heat = $2, updated_at = NOW()
-       WHERE device_key = $1`,
+      `
+      UPDATE devices
+      SET use_forced_air_for_heat = $2, updated_at = NOW()
+      WHERE device_key = $1
+      `,
       [device_key, use_forced_air_for_heat]
     );
+
     console.log(`[ingest] Updated device ${device_key} forcedAir=${use_forced_air_for_heat}`);
     return res.json({ ok: true });
   } catch (err: any) {
@@ -47,6 +53,9 @@ ingestRouter.post('/update-device', async (req, res) => {
   }
 });
 
+/**
+ * Batch ingest from all vendor microservices
+ */
 ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
   const events = Array.isArray(req.body) ? req.body : [req.body];
   const client = await pool.connect();
@@ -67,23 +76,34 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
       // ✅ Upsert into devices table
       await client.query(
         `
-        INSERT INTO devices (device_key, name, manufacturer, user_id)
-        VALUES ($1, $2, $3, $4)
+        INSERT INTO devices (
+          device_key,
+          name,
+          manufacturer,
+          user_id,
+          connection_source,
+          model
+        )
+        VALUES ($1, $2, $3, $4, $5, $6)
         ON CONFLICT (device_key) DO UPDATE
         SET name = COALESCE(EXCLUDED.name, devices.name),
             manufacturer = COALESCE(EXCLUDED.manufacturer, devices.manufacturer),
             user_id = COALESCE(EXCLUDED.user_id, devices.user_id),
+            connection_source = COALESCE(EXCLUDED.connection_source, devices.connection_source),
+            model = COALESCE(EXCLUDED.model, devices.model),
             updated_at = NOW()
         `,
         [
           e.device_key,
           e.device_name ?? null,
-          e.manufacturer ?? 'Nest',
+          e.manufacturer ?? 'Unknown',
           e.user_id ?? null,
+          e.connection_source ?? 'unknown',
+          e.model ?? null
         ]
       );
 
-      // ✅ Insert into equipment_events table
+      // ✅ Update current status in devices
       await client.query(
         `
         UPDATE devices
@@ -93,6 +113,10 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
           last_is_heating = CASE WHEN $3 IN ('HEATING') THEN TRUE ELSE FALSE END,
           last_is_fan_only = CASE WHEN $4 = TRUE THEN TRUE ELSE FALSE END,
           last_equipment_status = $3,
+          last_temperature = COALESCE($5, last_temperature),
+          last_humidity = COALESCE($6, last_humidity),
+          last_heat_setpoint = COALESCE($7, last_heat_setpoint),
+          last_cool_setpoint = COALESCE($8, last_cool_setpoint),
           updated_at = NOW()
         WHERE device_key = $1
         `,
@@ -100,10 +124,15 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
           e.device_key,
           e.event_type ?? null,
           e.equipment_status ?? 'OFF',
-          e.equipment_status === 'FAN' || e.event_type?.includes('FAN'),
+          e.fan_on ?? false,
+          e.temperature_f ?? null,
+          e.humidity ?? null,
+          e.heat_setpoint_f ?? null,
+          e.cool_setpoint_f ?? null
         ]
       );
-      
+
+      // ✅ Insert event record
       await client.query(
         `
         INSERT INTO equipment_events (
@@ -113,12 +142,15 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
           equipment_status,
           temperature_f,
           temperature_c,
+          humidity,
           runtime_seconds,
           event_timestamp,
           current_temp,
-          created_at
+          created_at,
+          source_vendor,
+          payload_raw
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW(),$11,$12)
         ON CONFLICT DO NOTHING
         `,
         [
@@ -128,9 +160,12 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
           e.equipment_status ?? 'OFF',
           e.temperature_f ?? null,
           e.temperature_c ?? null,
+          e.humidity ?? null,
           e.runtime_seconds ?? null,
           eventTimestamp,
           e.current_temp ?? e.temperature_f ?? null,
+          e.connection_source ?? 'unknown',
+          e.payload_raw ? JSON.stringify(e.payload_raw) : null
         ]
       );
 
@@ -142,14 +177,14 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
 
     return res.status(200).json({
       ok: true,
-      count: insertedEvents.length,
+      count: insertedEvents.length
     });
   } catch (err: any) {
     await client.query('ROLLBACK');
     console.error('[ingest] Error processing events batch:', err);
     return res.status(500).json({
       ok: false,
-      error: err.message || 'Unknown ingest error',
+      error: err.message || 'Unknown ingest error'
     });
   } finally {
     client.release();
@@ -164,12 +199,12 @@ ingestRouter.get('/health', async (_req: Request, res: Response) => {
     const r = await pool.query(`SELECT NOW() AS now`);
     return res.status(200).json({
       ok: true,
-      db_time: r.rows[0].now,
+      db_time: r.rows[0].now
     });
   } catch (err: any) {
     return res.status(500).json({
       ok: false,
-      error: err.message,
+      error: err.message
     });
   }
 });
