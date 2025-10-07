@@ -5,12 +5,32 @@ import { v4 as uuidv4 } from 'uuid';
 export const ingestRouter = express.Router();
 
 /**
+ * Helper to safely stringify JSON without breaking Postgres JSONB
+ */
+function safeJson(value: any): string | null {
+  try {
+    if (!value) return null;
+    const jsonStr = JSON.stringify(value);
+    // If it’s massive, wrap safely so it’s still valid JSON
+    if (jsonStr.length > 8000) {
+      const truncated = jsonStr.substring(0, 7990);
+      return JSON.stringify({ truncated: true, data: truncated });
+    }
+    return jsonStr;
+  } catch (err: any) {
+    console.error('[ingest] ⚠️ Failed to stringify payload_raw:', err.message);
+    return JSON.stringify({ error: 'stringify_failed' });
+  }
+}
+
+/**
  * POST /ingest/v1/events:batch
  * Accepts normalized device events from vendor services
  */
 ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
   let events: any[] = [];
 
+  // Handle both array or { events: [] } wrapper
   if (Array.isArray(req.body)) {
     events = req.body;
   } else if (req.body.events && Array.isArray(req.body.events)) {
@@ -24,14 +44,12 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
   const startTime = Date.now();
 
   try {
-    // 🆕  Incoming batch log header
     console.log('\n📥 [ingest] Incoming batch:', events.length, 'event(s)');
     for (const e of events) {
       console.log(
-        `   ↳ ${e.source || 'unknown'} | ${e.device_id || e.device_key || 'no-id'} |` +
-        ` ${e.event_type || 'no-type'} | status=${e.equipment_status || 'unknown'} |` +
-        ` active=${e.is_active ?? 'n/a'} | temp=${e.temperature_f ?? e.temperature_c ?? '—'} |` +
-        ` runtime=${e.runtime_seconds ?? '—'}`
+        `   ↳ ${e.source || 'unknown'} | ${e.device_id || e.device_key || 'no-id'} | ${e.event_type || 'no-type'} | ` +
+        `status=${e.equipment_status || 'unknown'} | active=${e.is_active ?? 'n/a'} | ` +
+        `temp=${e.temperature_f ?? e.temperature_c ?? '—'} | runtime=${e.runtime_seconds ?? '—'}`
       );
     }
 
@@ -49,6 +67,7 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
       let device_key = e.device_key;
       const device_id = e.device_id || e.device_key;
 
+      // Lookup existing key if needed
       if (!device_key) {
         const lookup = await client.query(
           'SELECT device_key FROM devices WHERE device_id = $1',
@@ -62,6 +81,7 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
           ? new Date(e.timestamp)
           : new Date();
 
+      // --- UPSERT devices ---
       await client.query(
         `
         INSERT INTO devices (
@@ -94,6 +114,7 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
         ]
       );
 
+      // --- Update current device state ---
       await client.query(
         `
         UPDATE devices
@@ -131,6 +152,7 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
         ]
       );
 
+      // --- Insert event record ---
       await client.query(
         `
         INSERT INTO equipment_events (
@@ -162,7 +184,7 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
           e.runtime_seconds || null,
           eventTimestamp,
           source,
-          e.payload_raw ? JSON.stringify(e.payload_raw).slice(0, 500) : null // 🆕 truncate
+          safeJson(e.payload_raw) // ✅ safe JSON stringifier
         ]
       );
 
@@ -170,70 +192,19 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
     }
 
     await client.query('COMMIT');
-
-    // 🆕  Summary logging
     console.log(
       `📤 [ingest] ✅ Inserted ${insertedEvents.length} event(s) in ${
         Date.now() - startTime
       }ms`
     );
 
-    return res.status(200).json({
-      ok: true,
-      count: insertedEvents.length
-    });
+    res.status(200).json({ ok: true, count: insertedEvents.length });
   } catch (err: any) {
     await client.query('ROLLBACK');
     console.error('[ingest] ❌ Error processing batch:', err.message);
-    return res.status(500).json({
-      ok: false,
-      error: err.message || 'Unknown ingest error'
-    });
+    res.status(500).json({ ok: false, error: err.message });
   } finally {
     client.release();
-  }
-});
-
-/**
- * PATCH /ingest/update-device
- */
-ingestRouter.post('/update-device', async (req, res) => {
-  const { device_key, use_forced_air_for_heat } = req.body;
-  if (!device_key) {
-    return res.status(400).json({ ok: false, error: 'Missing device_key' });
-  }
-  try {
-    await pool.query(
-      `
-      UPDATE devices
-      SET use_forced_air_for_heat = $2, updated_at = NOW()
-      WHERE device_key = $1
-      `,
-      [device_key, use_forced_air_for_heat]
-    );
-    console.log(`[ingest] Updated device ${device_key} forcedAir=${use_forced_air_for_heat}`);
-    return res.json({ ok: true });
-  } catch (err: any) {
-    console.error('[ingest] update-device error:', err.message);
-    return res.status(500).json({ ok: false, error: err.message });
-  }
-});
-
-/**
- * GET /ingest/health
- */
-ingestRouter.get('/health', async (_req: Request, res: Response) => {
-  try {
-    const r = await pool.query('SELECT NOW() AS now');
-    return res.status(200).json({
-      ok: true,
-      db_time: r.rows[0].now
-    });
-  } catch (err: any) {
-    return res.status(500).json({
-      ok: false,
-      error: err.message
-    });
   }
 });
 
