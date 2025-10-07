@@ -7,7 +7,7 @@ const DATABASE_URL = process.env.DATABASE_URL;
 const ENABLE_DATABASE = process.env.ENABLE_DATABASE !== '0';
 
 if (!ENABLE_DATABASE || !DATABASE_URL) {
-  throw new Error('❌ Database not enabled or DATABASE_URL missing.');
+  throw new Error('[ERROR] Database not enabled or DATABASE_URL missing.');
 }
 
 export const pool: Pool = new Pool({
@@ -20,9 +20,9 @@ export const pool: Pool = new Pool({
   connectionTimeoutMillis: 10000,
 });
 
-pool.on('connect', () => console.log('✅ Connected to Postgres'));
+pool.on('connect', () => console.log('[OK] Connected to Postgres'));
 pool.on('error', (err: Error) =>
-  console.error('Database pool error:', err.message)
+  console.error('[ERROR] Database pool error:', err.message)
 );
 
 // Optional helper for legacy imports
