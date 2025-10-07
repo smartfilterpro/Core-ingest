@@ -1,146 +1,167 @@
-import express, { Request, Response } from 'express';
-import { pool } from '../db/pool';
-import { v4 as uuidv4 } from 'uuid';
-import { NormalizedEventV2 } from '../types/NormalizedEventV2';
+import express, { Request, Response } from "express";
+import { pool } from "../db/pool";
+import { v4 as uuidv4 } from "uuid";
 
 export const ingestV2Router = express.Router();
 
 /**
  * POST /ingest/v2/events:batch
- * Accepts NormalizedEventV2[] from any vendor microservice
+ * Accepts normalized device events from any vendor (Nest, Ecobee, Resideo, etc.)
+ * Each event contains standard keys for consistency across ecosystems.
  */
-ingestV2Router.post('/v2/events:batch', async (req: Request, res: Response) => {
-  const events: NormalizedEventV2[] = Array.isArray(req.body) ? req.body : [req.body];
+ingestV2Router.post("/v2/events:batch", async (req: Request, res: Response) => {
+  const events = Array.isArray(req.body) ? req.body : [req.body];
   const client = await pool.connect();
+  const inserted: string[] = [];
 
   try {
-    await client.query('BEGIN');
-    let inserted = 0;
+    await client.query("BEGIN");
 
     for (const e of events) {
       if (!e.device_key) continue;
-      inserted++;
 
-      // ───────────── 1️⃣ Upsert into devices ─────────────
+      const eventTimestamp =
+        e.timestamp && !isNaN(Date.parse(e.timestamp))
+          ? new Date(e.timestamp)
+          : new Date();
+
+      // ✅ Ensure the device exists or update its metadata
       await client.query(
         `
         INSERT INTO devices (
-          device_key, name, manufacturer, model, connection_source,
-          device_type, firmware_version, serial_number, ip_address, updated_at
+          device_key,
+          name,
+          manufacturer,
+          user_id,
+          connection_source,
+          model
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
-        ON CONFLICT (device_key) DO UPDATE SET
+        VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (device_key) DO UPDATE
+        SET
           name = COALESCE(EXCLUDED.name, devices.name),
           manufacturer = COALESCE(EXCLUDED.manufacturer, devices.manufacturer),
-          model = COALESCE(EXCLUDED.model, devices.model),
+          user_id = COALESCE(EXCLUDED.user_id, devices.user_id),
           connection_source = COALESCE(EXCLUDED.connection_source, devices.connection_source),
-          device_type = COALESCE(EXCLUDED.device_type, devices.device_type),
-          firmware_version = COALESCE(EXCLUDED.firmware_version, devices.firmware_version),
-          serial_number = COALESCE(EXCLUDED.serial_number, devices.serial_number),
-          ip_address = COALESCE(EXCLUDED.ip_address, devices.ip_address),
+          model = COALESCE(EXCLUDED.model, devices.model),
           updated_at = NOW()
         `,
         [
           e.device_key,
           e.device_name ?? null,
-          e.manufacturer ?? null,
-          e.model ?? null,
+          e.manufacturer ?? "unknown",
+          e.user_id ?? null,
           e.connection_source ?? null,
-          e.device_type ?? 'thermostat',
-          e.firmware_version ?? null,
-          e.serial_number ?? null,
-          e.ip_address ?? null
+          e.model ?? null,
         ]
       );
 
-      // ───────────── 2️⃣ Insert equipment event ─────────────
-      const ts = e.observed_at ? new Date(e.observed_at) : new Date();
-
+      // ✅ Update last-known state in devices
       await client.query(
         `
-        INSERT INTO equipment_events (
-          device_key, observed_at, is_active, equipment_status, hvac_status,
-          temperature_f, temperature_c, humidity, outdoor_temperature_f,
-          outdoor_humidity, pressure_hpa, heat_setpoint_f, cool_setpoint_f,
-          target_humidity, runtime_seconds, source_vendor, payload_raw, created_at
-        )
-        VALUES (
-          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,NOW()
-        )
+        UPDATE devices
+        SET
+          last_mode = COALESCE($2, last_mode),
+          last_is_cooling = CASE WHEN $3 = 'COOLING' THEN TRUE ELSE FALSE END,
+          last_is_heating = CASE WHEN $3 = 'HEATING' THEN TRUE ELSE FALSE END,
+          last_is_fan_only = CASE WHEN $4 = TRUE THEN TRUE ELSE FALSE END,
+          last_equipment_status = $3,
+          last_temperature_f = $5,
+          last_humidity = $6,
+          updated_at = NOW()
+        WHERE device_key = $1
         `,
         [
           e.device_key,
-          ts,
-          e.is_active ?? false,
-          e.equipment_status ?? 'OFF',
-          e.hvac_mode ?? null,
+          e.event_type ?? null,
+          e.equipment_status ?? "OFF",
+          e.equipment_status === "FAN" || e.event_type?.includes("FAN"),
           e.temperature_f ?? null,
-          e.temperature_c ?? null,
           e.humidity ?? null,
-          e.outdoor_temperature_f ?? null,
-          e.outdoor_humidity ?? null,
-          e.pressure_hpa ?? null,
-          e.heat_setpoint_f ?? null,
-          e.cool_setpoint_f ?? null,
-          e.target_humidity ?? null,
-          e.runtime_seconds ?? null,
-          e.connection_source ?? null,
-          e.payload_raw ?? {}
         ]
       );
 
-      // ───────────── 3️⃣ Update device_status runtime flags ─────────────
+      // ✅ Log event to equipment_events
       await client.query(
         `
-        INSERT INTO device_status (device_key, is_running, last_equipment_status, updated_at)
-        VALUES ($1,$2,$3,NOW())
-        ON CONFLICT (device_key) DO UPDATE SET
-          is_running = EXCLUDED.is_running,
-          last_equipment_status = EXCLUDED.last_equipment_status,
-          updated_at = NOW()
+        INSERT INTO equipment_events (
+          id,
+          device_key,
+          event_type,
+          is_active,
+          equipment_status,
+          temperature_f,
+          temperature_c,
+          humidity,
+          runtime_seconds,
+          current_temp,
+          event_timestamp,
+          source_vendor,
+          created_at
+        )
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW())
+        ON CONFLICT DO NOTHING
         `,
-        [e.device_key, e.is_active ?? false, e.equipment_status ?? 'OFF']
+        [
+          uuidv4(),
+          e.device_key,
+          e.event_type ?? null,
+          e.is_active ?? false,
+          e.equipment_status ?? "OFF",
+          e.temperature_f ?? null,
+          e.temperature_c ?? null,
+          e.humidity ?? null,
+          e.runtime_seconds ?? null,
+          e.current_temp ?? e.temperature_f ?? null,
+          eventTimestamp,
+          e.source_vendor ?? "unknown",
+        ]
       );
 
-      // ───────────── 4️⃣ Manage runtime_sessions transitions ─────────────
-      const prev = await client.query<{
-  session_id: string;
-  started_at: Date;
-}>(
-  `SELECT session_id, started_at FROM runtime_sessions
-   WHERE device_key=$1 AND ended_at IS NULL
-   ORDER BY started_at DESC LIMIT 1`,
-  [e.device_key]
-);
+      inserted.push(e.device_key);
+    }
 
-const rowCount = prev?.rowCount ?? 0;
+    await client.query("COMMIT");
+    console.log(`[ingestV2] Inserted ${inserted.length} event(s).`);
+    res.status(200).json({ ok: true, count: inserted.length });
+  } catch (err: any) {
+    await client.query("ROLLBACK");
+    console.error("[ingestV2] Error:", err);
+    res.status(500).json({ ok: false, error: err.message });
+  } finally {
+    client.release();
+  }
+});
 
-if (e.is_active && rowCount === 0) {
-  // start new session
-  await client.query(
-    `INSERT INTO runtime_sessions (device_key, session_id, started_at, mode, is_counted, created_at)
-     VALUES ($1,$2,$3,$4,TRUE,NOW())`,
-    [e.device_key, uuidv4(), ts, e.hvac_mode ?? e.equipment_status ?? 'UNKNOWN']
-  );
-} else if (!e.is_active && rowCount > 0) {
-  const session = prev.rows[0];
-  const runtimeSeconds =
-    e.runtime_seconds ??
-    Math.round((ts.getTime() - new Date(session.started_at).getTime()) / 1000);
+/** PATCH /v2/update-device — from Bubble or integrations */
+ingestV2Router.post("/v2/update-device", async (req, res) => {
+  const { device_key, use_forced_air_for_heat } = req.body;
+  if (!device_key)
+    return res.status(400).json({ ok: false, error: "Missing device_key" });
 
-  await client.query(
-    `UPDATE runtime_sessions
-     SET ended_at=$2, runtime_seconds=$3, updated_at=NOW()
-     WHERE session_id=$1`,
-    [session.session_id, ts, runtimeSeconds]
-  );
-}
-
+  try {
+    await pool.query(
+      `
+      UPDATE devices
+      SET use_forced_air_for_heat = $2, updated_at = NOW()
+      WHERE device_key = $1
+      `,
+      [device_key, use_forced_air_for_heat]
+    );
+    console.log(
+      `[ingestV2] Updated device ${device_key} forcedAir=${use_forced_air_for_heat}`
+    );
+    res.json({ ok: true });
+  } catch (err: any) {
+    console.error("[ingestV2] update-device error:", err.message);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
 
 /** Health endpoint */
-ingestV2Router.get('/v2/health', async (_req, res) => {
+ingestV2Router.get("/v2/health", async (_req, res) => {
   try {
-    const r = await pool.query('SELECT NOW() as now');
+    const r = await pool.query("SELECT NOW() as now");
     res.status(200).json({ ok: true, db_time: r.rows[0].now });
   } catch (err: any) {
     res.status(500).json({ ok: false, error: err.message });
