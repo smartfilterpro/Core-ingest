@@ -12,28 +12,34 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
   const events = Array.isArray(req.body) ? req.body : [req.body];
   const client = await pool.connect();
   const insertedEvents: string[] = [];
+  const startTime = Date.now();
 
   try {
     await client.query('BEGIN');
 
     for (const e of events) {
-      // device_key is the UUID primary key
-      // device_id is the vendor-specific identifier (nest:abc, ecobee:123)
-      let device_key = e.device_key;
-      const device_id = e.device_id || e.device_key; // fallback
+      // ✅ Basic validation
+      if (!e.device_key && !e.device_id) {
+        console.warn('[ingest] Skipping event with no device_key/device_id', e);
+        continue;
+      }
 
-      // If no device_key provided, try to lookup by device_id or generate new
+      // Normalize vendor/source
+      const source = (e.source || 'unknown').toLowerCase();
+      const connection_source = (e.connection_source || 'unknown').toLowerCase();
+
+      // device_key is canonical UUID
+      // device_id is vendor-specific (nest:abc, ecobee:123)
+      let device_key = e.device_key;
+      const device_id = e.device_id || e.device_key;
+
+      // Lookup existing key if needed
       if (!device_key) {
         const lookup = await client.query(
           'SELECT device_key FROM devices WHERE device_id = $1',
           [device_id]
         );
-        
-        if (lookup.rows[0]) {
-          device_key = lookup.rows[0].device_key;
-        } else {
-          device_key = uuidv4();
-        }
+        device_key = lookup.rows[0]?.device_key || uuidv4();
       }
 
       const eventTimestamp =
@@ -41,7 +47,7 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
           ? new Date(e.timestamp)
           : new Date();
 
-      // Upsert into devices table
+      // ✅ UPSERT devices
       await client.query(
         `
         INSERT INTO devices (
@@ -59,7 +65,7 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
           created_at,
           updated_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW(),NOW())
         ON CONFLICT (device_key) DO UPDATE
         SET device_name = COALESCE(EXCLUDED.device_name, devices.device_name),
             manufacturer = COALESCE(EXCLUDED.manufacturer, devices.manufacturer),
@@ -76,24 +82,33 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
           e.device_name || null,
           e.manufacturer || 'Unknown',
           e.model || null,
-          e.source || 'unknown',
-          e.connection_source || 'unknown',
+          source,
+          connection_source,
           e.zip_code_prefix || null,
           e.timezone || null,
           e.firmware_version || null
         ]
       );
 
-      // Update last-known state in devices
+      // ✅ Update device current state
       await client.query(
         `
         UPDATE devices
         SET
           last_mode = COALESCE($2, last_mode),
           last_equipment_status = $3,
-          last_is_cooling = CASE WHEN $3 IN ('COOLING', 'cool') THEN TRUE ELSE last_is_cooling END,
-          last_is_heating = CASE WHEN $3 IN ('HEATING', 'heat') THEN TRUE ELSE last_is_heating END,
-          last_is_fan_only = CASE WHEN $3 IN ('FAN', 'fan') OR $4 = TRUE THEN TRUE ELSE last_is_fan_only END,
+          last_is_cooling = CASE 
+            WHEN $3 IN ('COOLING','cool') THEN TRUE
+            WHEN $3 IN ('OFF','off') THEN FALSE
+            ELSE last_is_cooling END,
+          last_is_heating = CASE 
+            WHEN $3 IN ('HEATING','heat') THEN TRUE
+            WHEN $3 IN ('OFF','off') THEN FALSE
+            ELSE last_is_heating END,
+          last_is_fan_only = CASE 
+            WHEN $3 IN ('FAN','fan') OR $4 = TRUE THEN TRUE
+            WHEN $3 IN ('OFF','off') THEN FALSE
+            ELSE last_is_fan_only END,
           last_temperature = COALESCE($5, last_temperature),
           last_humidity = COALESCE($6, last_humidity),
           last_heat_setpoint = COALESCE($7, last_heat_setpoint),
@@ -113,7 +128,7 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
         ]
       );
 
-      // Insert event record
+      // ✅ Insert into equipment_events (dedupe by device_key + source_event_id)
       await client.query(
         `
         INSERT INTO equipment_events (
@@ -137,8 +152,8 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
           payload_raw,
           created_at
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,NOW())
-        ON CONFLICT (source_event_id) DO NOTHING
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16 AT TIME ZONE 'UTC',$17,$18,NOW())
+        ON CONFLICT (device_key, source_event_id) DO NOTHING
         `,
         [
           uuidv4(),
@@ -157,7 +172,7 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
           e.cool_setpoint_f || null,
           e.runtime_seconds || null,
           eventTimestamp,
-          e.source || 'unknown',
+          source,
           e.payload_raw ? JSON.stringify(e.payload_raw) : null
         ]
       );
@@ -166,7 +181,12 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
     }
 
     await client.query('COMMIT');
-    console.log(`[ingest] [OK] Inserted ${insertedEvents.length} event(s)`);
+
+    console.log(
+      `[ingest] ✅ Inserted ${insertedEvents.length} event(s) in ${
+        Date.now() - startTime
+      }ms`
+    );
 
     return res.status(200).json({
       ok: true,
@@ -174,7 +194,7 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
     });
   } catch (err: any) {
     await client.query('ROLLBACK');
-    console.error('[ingest] [ERROR] Processing events batch:', err);
+    console.error('[ingest] ❌ Error processing batch:', err.message);
     return res.status(500).json({
       ok: false,
       error: err.message || 'Unknown ingest error'
