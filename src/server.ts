@@ -6,9 +6,9 @@ import ingestRouter from "./routes/ingest";
 import ingestV2Router from "./routes/ingestV2";
 import healthRouter from "./routes/health";
 import filterResetRouter from "./routes/filterReset";
-import bubbleSyncRouter from "./routes/bubbleSync";
 import usersRouter from "./routes/users";
 import { workerLogsRouter } from "./routes/workerLogs";
+import { deviceStatusRouter } from "./routes/deviceStatus";
 import {
   runSessionStitcher,
   runSummaryWorker,
@@ -37,9 +37,9 @@ app.get("/health", async (_req, res) => {
 // Mount routers
 app.use("/ingest", ingestRouter);
 app.use("/ingest", ingestV2Router);
+app.use("/ingest", deviceStatusRouter);
 app.use("/health", healthRouter);
 app.use("/filter-reset", filterResetRouter);
-app.use("/bubble-sync", bubbleSyncRouter);
 app.use("/users", usersRouter);
 app.use("/workers", workerLogsRouter);
 
