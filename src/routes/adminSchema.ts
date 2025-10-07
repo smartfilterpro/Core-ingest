@@ -56,4 +56,27 @@ router.post('/add-unique-constraints', async (_req: Request, res: Response) => {
   }
 });
 
+router.post('/fix-unique-constraint', async (_req: Request, res: Response) => {
+  try {
+    // Drop the partial index
+    await pool.query(`
+      DROP INDEX IF EXISTS idx_equipment_events_source_event_id;
+    `);
+    
+    // Create a proper unique constraint (not partial)
+    await pool.query(`
+      ALTER TABLE equipment_events 
+      ADD CONSTRAINT equipment_events_source_event_id_unique 
+      UNIQUE (source_event_id);
+    `);
+    
+    res.json({ 
+      ok: true, 
+      message: 'Fixed: source_event_id now has proper unique constraint' 
+    });
+  } catch (err: any) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 export default router;
