@@ -79,4 +79,26 @@ router.post('/fix-unique-constraint', async (_req: Request, res: Response) => {
   }
 });
 
+router.post('/fix-observed-at', async (_req: Request, res: Response) => {
+  try {
+    // Make observed_at nullable OR add default
+    await pool.query(`
+      ALTER TABLE equipment_events 
+      ALTER COLUMN observed_at DROP NOT NULL;
+    `);
+    
+    await pool.query(`
+      ALTER TABLE equipment_events 
+      ALTER COLUMN observed_at SET DEFAULT NOW();
+    `);
+    
+    res.json({ 
+      ok: true, 
+      message: 'Fixed: observed_at now has default value' 
+    });
+  } catch (err: any) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 export default router;
