@@ -3,10 +3,12 @@ import cors from 'cors';
 import bodyParser from 'body-parser';
 import { pool } from './db/pool';
 import { ensureSchema } from './db/ensureSchema';
-import ingestRouter from './routes/ingest';
-import ingestV2Router from './routes/ingestV2';
 
-// ✅ Standardized worker imports
+// ✅ Routers
+import ingestRouter from './routes/ingest';      // v1 legacy
+import ingestV2Router from './routes/ingestV2';  // v2 unified ingest
+
+// ✅ Workers
 import { runSessionStitcher } from './workers/sessionStitcher';
 import { runSummaryWorker } from './workers/summaryWorker';
 import { runRegionAggregationWorker } from './workers/regionAggregationWorker';
@@ -19,7 +21,7 @@ const PORT = process.env.PORT || 8080;
 app.use(cors());
 app.use(bodyParser.json({ limit: '2mb' }));
 
-// ✅ Health check route
+// ✅ Health check (root)
 app.get('/health', async (_req, res) => {
   try {
     const r = await pool.query('SELECT NOW() as now');
@@ -31,10 +33,21 @@ app.get('/health', async (_req, res) => {
 });
 
 // ✅ Mount ingest routes
-app.use('/ingest', ingestRouter);   // v1 legacy
-app.use('/ingest', ingestV2Router); // v2 universal
+// v1 = legacy format from early vendor microservices (Nest, Ecobee, etc.)
+// v2 = new normalized unified ingest endpoint
+app.use('/ingest', ingestRouter);
+app.use('/ingest', ingestV2Router);
 
-// ✅ Worker endpoints
+// ✅ Health routes for each ingest version
+app.get('/ingest/v1/health', async (_req, res) => {
+  res.status(200).json({ ok: true, version: 'v1', message: 'Ingest V1 ready' });
+});
+
+app.get('/ingest/v2/health', async (_req, res) => {
+  res.status(200).json({ ok: true, version: 'v2', message: 'Ingest V2 ready' });
+});
+
+// ✅ Worker trigger endpoints (manual run/debug)
 app.get('/workers/run-all', async (_req, res) => {
   console.log('[workers] Running all workers sequentially...');
   const results: any[] = [];
@@ -59,7 +72,7 @@ app.get('/workers/run-all', async (_req, res) => {
   }
 });
 
-// ✅ Individual worker endpoints (for debugging)
+// ✅ Individual worker endpoints
 app.get('/workers/session-stitcher', async (_req, res) => {
   const result = await runSessionStitcher();
   res.status(result.ok ? 200 : 500).json(result);
@@ -75,22 +88,4 @@ app.get('/workers/region', async (_req, res) => {
   res.status(200).json({ ok: true, result });
 });
 
-app.get('/workers/ai', async (_req, res) => {
-  const result = await runAIWorker(pool);
-  res.status(200).json({ ok: true, result });
-});
-
-// ✅ Initialize schema and start server
-(async () => {
-  try {
-    await ensureSchema(pool);
-    console.log('✅ Database schema verified.');
-  } catch (err: any) {
-    console.error('❌ Error ensuring schema:', err.message);
-    process.exit(1);
-  }
-
-  app.listen(PORT, () => {
-    console.log(`🚀 SmartFilterPro Core Ingest Service running on port ${PORT}`);
-  });
-})();
+app.get('/worker
