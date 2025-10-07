@@ -5,18 +5,25 @@ const router = express.Router();
 
 router.post('/fix-equipment-events', async (_req, res) => {
   try {
-    // Fix id column to UUID
+    // Step 1: Drop the existing default
+    await pool.query(`
+      ALTER TABLE equipment_events 
+      ALTER COLUMN id DROP DEFAULT;
+    `);
+    
+    // Step 2: Change type to UUID
     await pool.query(`
       ALTER TABLE equipment_events 
       ALTER COLUMN id TYPE UUID USING gen_random_uuid();
     `);
     
+    // Step 3: Set new UUID default
     await pool.query(`
       ALTER TABLE equipment_events 
       ALTER COLUMN id SET DEFAULT gen_random_uuid();
     `);
     
-    // Add recorded_at if missing
+    // Step 4: Add recorded_at if missing
     await pool.query(`
       ALTER TABLE equipment_events 
       ADD COLUMN IF NOT EXISTS recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
