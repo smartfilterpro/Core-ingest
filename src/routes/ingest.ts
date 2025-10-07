@@ -9,7 +9,17 @@ export const ingestRouter = express.Router();
  * Accepts normalized device events from vendor services
  */
 ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
-  const events = Array.isArray(req.body) ? req.body : [req.body];
+  let events: any[] = [];
+
+  // ✅ Handle multiple possible formats
+  if (Array.isArray(req.body)) {
+    events = req.body;
+  } else if (req.body.events && Array.isArray(req.body.events)) {
+    events = req.body.events;
+  } else {
+    events = [req.body];
+  }
+
   const client = await pool.connect();
   const insertedEvents: string[] = [];
   const startTime = Date.now();
@@ -210,7 +220,7 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
  */
 ingestRouter.post('/update-device', async (req, res) => {
   const { device_key, use_forced_air_for_heat } = req.body;
-  
+
   if (!device_key) {
     return res.status(400).json({ ok: false, error: 'Missing device_key' });
   }
