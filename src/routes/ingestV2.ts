@@ -25,11 +25,11 @@ ingestV2Router.post('/v2/events:batch', async (req: Request, res: Response) => {
       await client.query(
         `
         INSERT INTO devices (
-          device_id, name, manufacturer, model, connection_source,
+          device_key, name, manufacturer, model, connection_source,
           device_type, firmware_version, serial_number, ip_address, updated_at
         )
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
-        ON CONFLICT (device_id) DO UPDATE SET
+        ON CONFLICT (device_key) DO UPDATE SET
           name = COALESCE(EXCLUDED.name, devices.name),
           manufacturer = COALESCE(EXCLUDED.manufacturer, devices.manufacturer),
           model = COALESCE(EXCLUDED.model, devices.model),
