@@ -82,8 +82,20 @@ app.get("/workers/ai", async (_req, res) => {
   res.status(200).json({ ok: true, result });
 });
 
-// Start server
-app.listen(PORT, () => {
-  console.log(`[OK] SmartFilterPro Core Ingest Service running on port ${PORT}`);
-  console.log(`[OK] Database connected to Postgres`);
-});
+// Run migrations and start server
+(async () => {
+  try {
+    // Import and run migrations
+    const { runMigrations } = await import("./runMigrations");
+    await runMigrations();
+    console.log("[OK] Database migrations completed");
+  } catch (err: any) {
+    console.error("[ERROR] Migration failed:", err.message);
+    console.log("[WARNING] Starting server anyway...");
+  }
+
+  app.listen(PORT, () => {
+    console.log(`[OK] SmartFilterPro Core Ingest Service running on port ${PORT}`);
+    console.log(`[OK] Database connected to Postgres`);
+  });
+})();
