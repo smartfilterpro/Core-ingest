@@ -10,7 +10,7 @@ export const ingestRouter = express.Router();
  * Example payload:
  * [
  *   {
- *     device_id: "abc123",
+ *     device_key: "abc123",
  *     event_type: "COOL_ON",
  *     is_active: true,
  *     equipment_status: "COOLING",
@@ -27,19 +27,19 @@ export const ingestRouter = express.Router();
  * PATCH/POST from Bubble to update device settings
  */
 ingestRouter.post('/update-device', async (req, res) => {
-  const { device_id, use_forced_air_for_heat } = req.body;
-  if (!device_id) {
-    return res.status(400).json({ ok: false, error: 'Missing device_id' });
+  const { device_key, use_forced_air_for_heat } = req.body;
+  if (!device_key) {
+    return res.status(400).json({ ok: false, error: 'Missing device_key' });
   }
 
   try {
     await pool.query(
       `UPDATE devices
        SET use_forced_air_for_heat = $2, updated_at = NOW()
-       WHERE device_id = $1`,
-      [device_id, use_forced_air_for_heat]
+       WHERE device_key = $1`,
+      [device_key, use_forced_air_for_heat]
     );
-    console.log(`[ingest] Updated device ${device_id} forcedAir=${use_forced_air_for_heat}`);
+    console.log(`[ingest] Updated device ${device_key} forcedAir=${use_forced_air_for_heat}`);
     return res.json({ ok: true });
   } catch (err: any) {
     console.error('[ingest] update-device error:', err.message);
@@ -56,7 +56,7 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
     await client.query('BEGIN');
 
     for (const e of events) {
-      if (!e.device_id) continue;
+      if (!e.device_key) continue;
 
       // Ensure timestamp exists
       const eventTimestamp =
@@ -67,16 +67,16 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
       // ✅ Upsert into devices table
       await client.query(
         `
-        INSERT INTO devices (device_id, name, manufacturer, user_id)
+        INSERT INTO devices (device_key, name, manufacturer, user_id)
         VALUES ($1, $2, $3, $4)
-        ON CONFLICT (device_id) DO UPDATE
+        ON CONFLICT (device_key) DO UPDATE
         SET name = COALESCE(EXCLUDED.name, devices.name),
             manufacturer = COALESCE(EXCLUDED.manufacturer, devices.manufacturer),
             user_id = COALESCE(EXCLUDED.user_id, devices.user_id),
             updated_at = NOW()
         `,
         [
-          e.device_id,
+          e.device_key,
           e.device_name ?? null,
           e.manufacturer ?? 'Nest',
           e.user_id ?? null,
@@ -94,10 +94,10 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
           last_is_fan_only = CASE WHEN $4 = TRUE THEN TRUE ELSE FALSE END,
           last_equipment_status = $3,
           updated_at = NOW()
-        WHERE device_id = $1
+        WHERE device_key = $1
         `,
         [
-          e.device_id,
+          e.device_key,
           e.event_type ?? null,
           e.equipment_status ?? 'OFF',
           e.equipment_status === 'FAN' || e.event_type?.includes('FAN'),
@@ -107,7 +107,7 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
       await client.query(
         `
         INSERT INTO equipment_events (
-          device_id,
+          device_key,
           event_type,
           is_active,
           equipment_status,
@@ -122,7 +122,7 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
         ON CONFLICT DO NOTHING
         `,
         [
-          e.device_id,
+          e.device_key,
           e.event_type ?? null,
           e.is_active ?? false,
           e.equipment_status ?? 'OFF',
@@ -134,7 +134,7 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
         ]
       );
 
-      insertedEvents.push(e.device_id);
+      insertedEvents.push(e.device_key);
     }
 
     await client.query('COMMIT');
