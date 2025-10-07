@@ -15,6 +15,7 @@ import {
   runRegionAggregationWorker,
   runAIWorker,
 } from "./workers";
+import adminSchemaRouter from "./routes/adminSchema";
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -42,6 +43,7 @@ app.use("/health", healthRouter);
 app.use("/filter-reset", filterResetRouter);
 app.use("/users", usersRouter);
 app.use("/workers", workerLogsRouter);
+app.use("/admin/schema", adminSchemaRouter);
 
 // Worker endpoints
 app.get("/workers/run-all", async (_req, res) => {
