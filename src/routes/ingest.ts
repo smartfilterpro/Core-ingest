@@ -6,28 +6,48 @@ export const ingestRouter = express.Router();
 
 /**
  * POST /ingest/v1/events:batch
- * Accepts normalized device events from vendor services
+ * Accepts normalized device events from vendor services (e.g., Nest, Ecobee, Resideo, etc.)
+ * Handles both flat arrays and nested { events: [ ... ] } payloads
  */
 ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
-  const events = Array.isArray(req.body) ? req.body : [req.body];
+  // 🧠 Normalize payload format
+  let raw = req.body;
+  let events: any[] = [];
+
+  if (Array.isArray(raw)) {
+    for (const item of raw) {
+      if (item.events && Array.isArray(item.events)) {
+        events.push(...item.events);
+      } else {
+        events.push(item);
+      }
+    }
+  } else if (raw.events && Array.isArray(raw.events)) {
+    events = raw.events;
+  } else {
+    events = [raw];
+  }
+
+  // --- Database client ---
   const client = await pool.connect();
   const insertedEvents: string[] = [];
 
-  // ✅ NEW: Log full inbound body for debugging
+  // --- Verbose logs ---
   console.log('\n📬 [ingest] Full incoming payload:');
-  console.dir(events, { depth: null });
+  console.dir(req.body, { depth: null });
+  console.log(`📥 [ingest] Normalized ${events.length} event(s):`);
 
-  console.log(`📥 [ingest] Incoming batch: ${events.length} event(s)`);
+  for (const e of events) {
+    console.log(
+      `   ↳ ${e.source || 'unknown'} | ${e.device_id || '—'} | ${e.event_type || '—'} | status=${e.equipment_status || '—'} | active=${e.is_active ?? '—'} | temp=${e.temperature_f ?? '—'} | humidity=${e.humidity ?? '—'} | runtime=${e.runtime_seconds ?? '—'}`
+    );
+  }
 
   try {
     await client.query('BEGIN');
 
     for (const e of events) {
-      console.log(
-        `   ↳ ${e.source || 'unknown'} | ${e.device_id || '—'} | ${e.event_type || '—'} | status=${e.equipment_status || '—'} | active=${e.is_active ?? '—'} | temp=${e.temperature_f ?? '—'} | humidity=${e.humidity ?? '—'} | runtime=${e.runtime_seconds ?? '—'}`
-      );
-
-      // --- Normalize required fields ---
+      // --- Resolve device_key ---
       let device_key = e.device_key;
       const device_id = e.device_id || e.device_key;
 
@@ -49,7 +69,7 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
           ? new Date(e.timestamp)
           : new Date();
 
-      // --- Devices table upsert ---
+      // --- UPSERT into devices table ---
       await client.query(
         `
         INSERT INTO devices (
@@ -83,7 +103,7 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
         ]
       );
 
-      // --- Device status update ---
+      // --- Update last-known device state ---
       await client.query(
         `
         UPDATE devices
@@ -112,7 +132,7 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
         ]
       );
 
-      // --- Equipment event insert ---
+      // --- Insert into equipment_events ---
       await client.query(
         `
         INSERT INTO equipment_events (
@@ -159,6 +179,48 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
     return res.status(500).json({ ok: false, error: err.message });
   } finally {
     client.release();
+  }
+});
+
+/**
+ * PATCH /ingest/update-device
+ * Allows Bubble or admin services to update runtime settings
+ */
+ingestRouter.post('/update-device', async (req, res) => {
+  const { device_key, use_forced_air_for_heat } = req.body;
+
+  if (!device_key) {
+    return res.status(400).json({ ok: false, error: 'Missing device_key' });
+  }
+
+  try {
+    await pool.query(
+      `
+      UPDATE devices
+      SET use_forced_air_for_heat = $2, updated_at = NOW()
+      WHERE device_key = $1
+      `,
+      [device_key, use_forced_air_for_heat]
+    );
+
+    console.log(`[ingest] Updated device ${device_key} forcedAir=${use_forced_air_for_heat}`);
+    return res.json({ ok: true });
+  } catch (err: any) {
+    console.error('[ingest] update-device error:', err.message);
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/**
+ * GET /ingest/health
+ * Simple DB connectivity check
+ */
+ingestRouter.get('/health', async (_req: Request, res: Response) => {
+  try {
+    const r = await pool.query('SELECT NOW() AS now');
+    return res.status(200).json({ ok: true, db_time: r.rows[0].now });
+  } catch (err: any) {
+    return res.status(500).json({ ok: false, error: err.message });
   }
 });
 
