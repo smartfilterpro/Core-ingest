@@ -161,3 +161,5 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
     client.release();
   }
 });
+
+export default ingestRouter;
