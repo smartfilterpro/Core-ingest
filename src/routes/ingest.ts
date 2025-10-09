@@ -156,19 +156,19 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
         ]
       );
 
-      // --- Append event to history ---
+      // --- Append-only event insert (deduped by device+type+status+time) ---
       await client.query(
         `
         INSERT INTO equipment_events (
           id, device_key, source_event_id, event_type, is_active,
           equipment_status, previous_status,
-          last_temperature, last_humidity,
+          last_temperature, last_temperature_c, last_humidity,
           last_heat_setpoint, last_cool_setpoint,
           runtime_seconds, recorded_at,
           source_vendor, payload_raw, created_at
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NOW())
-        ON CONFLICT (device_key, source_event_id) DO NOTHING;
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,NOW())
+        ON CONFLICT (device_key, event_type, equipment_status, recorded_at) DO NOTHING;
         `,
         [
           uuidv4(),
@@ -179,6 +179,7 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
           equipment_status,
           e.previous_status || null,
           temperature_f,
+          temperature_c,
           humidity,
           heat_setpoint,
           cool_setpoint,
@@ -188,21 +189,22 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
           JSON.stringify(e)
         ]
       );
-
-      inserted.push(device_key);
-    }
-
-    await client.query('COMMIT');
-    console.log(`📤 [ingest] ✅ Inserted ${inserted.length} event(s)\n`);
-    return res.status(200).json({ ok: true, count: inserted.length });
-  } catch (err: any) {
-    await client.query('ROLLBACK');
-    console.error('[ingest] ❌ Error processing batch:', err);
-    return res.status(500).json({ ok: false, error: err.message });
-  } finally {
-    client.release();
-  }
-});
+      
+      
+            inserted.push(device_key);
+          }
+      
+          await client.query('COMMIT');
+          console.log(`📤 [ingest] ✅ Inserted ${inserted.length} event(s)\n`);
+          return res.status(200).json({ ok: true, count: inserted.length });
+        } catch (err: any) {
+          await client.query('ROLLBACK');
+          console.error('[ingest] ❌ Error processing batch:', err);
+          return res.status(500).json({ ok: false, error: err.message });
+        } finally {
+          client.release();
+        }
+      });
 
 // Health check
 ingestRouter.get('/health', async (_req: Request, res: Response) => {
