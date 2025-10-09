@@ -89,56 +89,81 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
       );
 
       // --- Upsert latest state snapshot into device_status ---
-      await client.query(
-        `
-        INSERT INTO device_status (
-          device_key, device_name, manufacturer, source_vendor, connection_source,
-          is_reachable, last_mode, current_equipment_status,
-          last_temperature, current_temp_f, last_temperature_c,
-          last_cool_setpoint, last_heat_setpoint,
-          last_equipment_status, last_activity_at, last_seen_at, last_active, updated_at
-        )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,NOW())
-        ON CONFLICT (device_key) DO UPDATE
-        SET 
-          device_name = EXCLUDED.device_name,
-          manufacturer = EXCLUDED.manufacturer,
-          source_vendor = EXCLUDED.source_vendor,
-          connection_source = EXCLUDED.connection_source,
-          is_reachable = EXCLUDED.is_reachable,
-          last_mode = EXCLUDED.last_mode,
-          current_equipment_status = EXCLUDED.current_equipment_status,
-          last_temperature = EXCLUDED.last_temperature,
-          current_temp_f = EXCLUDED.current_temp_f,
-          last_temperature_c = EXCLUDED.last_temperature_c,
-          last_cool_setpoint = EXCLUDED.last_cool_setpoint,
-          last_heat_setpoint = EXCLUDED.last_heat_setpoint,
-          last_equipment_status = EXCLUDED.last_equipment_status,
-          last_activity_at = EXCLUDED.last_activity_at,
-          last_seen_at = EXCLUDED.last_seen_at,
-          last_active = EXCLUDED.last_active,
-          updated_at = NOW();
-        `,
-        [
-          device_key,
-          e.device_name || null,
-          e.manufacturer || 'Unknown',
-          e.source_vendor || e.source || 'unknown',
-          e.connection_source || e.source || 'unknown',
-          e.is_reachable ?? true,
-          e.last_mode || 'off',
-          equipment_status,
-          temperature_f,
-          temperature_f, // → current_temp_f
-          temperature_c,
-          cool_setpoint,
-          heat_setpoint,
-          e.last_equipment_status || e.equipment_status || null,
-          e.is_active ? event_time : null, // last_activity_at
-          e.is_reachable ? event_time : null, // last_seen_at
-          e.is_active ?? false
-        ]
-      );
+await client.query(
+  `
+  INSERT INTO device_status (
+    device_key,
+    device_name,
+    is_reachable,
+    last_mode,
+    current_equipment_status,
+    last_equipment_status,
+    last_is_heating,
+    last_is_cooling,
+    last_is_fan_only,
+    last_temperature,
+    last_humidity,
+    last_heat_setpoint,
+    last_cool_setpoint,
+    last_active,
+    last_seen_at,
+    manufacturer,
+    connection_source,
+    source_vendor,
+    frontend_id,
+    is_running,
+    updated_at
+  )
+  VALUES (
+    $1,$2,$3,$4,$5,$6,
+    $7,$8,$9,
+    $10,$11,$12,$13,
+    NOW(), NOW(),
+    $14,$15,$16,$17,$18,NOW()
+  )
+  ON CONFLICT (device_key) DO UPDATE
+  SET
+    is_reachable = EXCLUDED.is_reachable,
+    last_mode = EXCLUDED.last_mode,
+    current_equipment_status = EXCLUDED.current_equipment_status,
+    last_equipment_status = EXCLUDED.last_equipment_status,
+    last_is_heating = EXCLUDED.last_is_heating,
+    last_is_cooling = EXCLUDED.last_is_cooling,
+    last_is_fan_only = EXCLUDED.last_is_fan_only,
+    last_temperature = EXCLUDED.last_temperature,
+    last_humidity = EXCLUDED.last_humidity,
+    last_heat_setpoint = EXCLUDED.last_heat_setpoint,
+    last_cool_setpoint = EXCLUDED.last_cool_setpoint,
+    last_active = NOW(),
+    last_seen_at = NOW(),
+    manufacturer = COALESCE(EXCLUDED.manufacturer, device_status.manufacturer),
+    connection_source = COALESCE(EXCLUDED.connection_source, device_status.connection_source),
+    source_vendor = COALESCE(EXCLUDED.source_vendor, device_status.source_vendor),
+    frontend_id = COALESCE(EXCLUDED.frontend_id, device_status.frontend_id),
+    is_running = EXCLUDED.is_running,
+    updated_at = NOW();
+  `,
+  [
+    e.device_key,
+    e.device_name || null,
+    e.is_reachable ?? true,
+    e.last_mode || e.event_type || 'unknown',
+    e.equipment_status || 'OFF',
+    e.previous_status || 'unknown',
+    e.last_is_heating ?? false,
+    e.last_is_cooling ?? false,
+    e.last_is_fan_only ?? false,
+    e.temperature_f || null,
+    e.humidity || null,
+    e.heat_setpoint_f || null,
+    e.cool_setpoint_f || null,
+    e.manufacturer || 'Unknown',
+    e.connection_source || e.source || 'unknown',
+    e.source_vendor || e.source || 'unknown',
+    e.user_id || null,
+    e.is_active ?? false
+  ]
+);
 
       // --- Append-only event insert (historical log, deduped by device+type+time) ---
       await client.query(
