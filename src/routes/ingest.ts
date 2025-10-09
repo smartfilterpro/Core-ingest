@@ -31,7 +31,6 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
     await client.query('BEGIN');
 
     for (const e of events) {
-      // --- Normalize fields ---
       const device_key = e.device_key || e.device_id || uuidv4();
       const device_id = e.device_id || e.device_key;
       const workspace_id = e.workspace_id || e.user_id || 'unknown';
@@ -89,40 +88,59 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
         ]
       );
 
-      // --- Update latest state snapshot in device_status ---
+      // --- Upsert latest state snapshot into device_status ---
       await client.query(
         `
         INSERT INTO device_status (
-          device_key, device_name, is_reachable, last_mode,
-          current_equipment_status, last_temperature, last_temperature_c,
-          last_cool_setpoint, last_heat_setpoint, updated_at
+          device_key, device_name, manufacturer, source_vendor, connection_source,
+          is_reachable, last_mode, current_equipment_status,
+          last_temperature, current_temp_f, last_temperature_c,
+          last_cool_setpoint, last_heat_setpoint,
+          last_equipment_status, last_activity_at, last_seen_at, last_active, updated_at
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,NOW())
         ON CONFLICT (device_key) DO UPDATE
         SET 
+          device_name = EXCLUDED.device_name,
+          manufacturer = EXCLUDED.manufacturer,
+          source_vendor = EXCLUDED.source_vendor,
+          connection_source = EXCLUDED.connection_source,
           is_reachable = EXCLUDED.is_reachable,
           last_mode = EXCLUDED.last_mode,
           current_equipment_status = EXCLUDED.current_equipment_status,
           last_temperature = EXCLUDED.last_temperature,
+          current_temp_f = EXCLUDED.current_temp_f,
           last_temperature_c = EXCLUDED.last_temperature_c,
           last_cool_setpoint = EXCLUDED.last_cool_setpoint,
           last_heat_setpoint = EXCLUDED.last_heat_setpoint,
-          updated_at = NOW()
+          last_equipment_status = EXCLUDED.last_equipment_status,
+          last_activity_at = EXCLUDED.last_activity_at,
+          last_seen_at = EXCLUDED.last_seen_at,
+          last_active = EXCLUDED.last_active,
+          updated_at = NOW();
         `,
         [
           device_key,
           e.device_name || null,
+          e.manufacturer || 'Unknown',
+          e.source_vendor || e.source || 'unknown',
+          e.connection_source || e.source || 'unknown',
           e.is_reachable ?? true,
           e.last_mode || 'off',
           equipment_status,
           temperature_f,
+          temperature_f, // → current_temp_f
           temperature_c,
           cool_setpoint,
-          heat_setpoint
+          heat_setpoint,
+          e.last_equipment_status || e.equipment_status || null,
+          e.is_active ? event_time : null, // last_activity_at
+          e.is_reachable ? event_time : null, // last_seen_at
+          e.is_active ?? false
         ]
       );
 
-      // --- Append-only event insert (historical log) ---
+      // --- Append-only event insert (historical log, deduped by device+type+time) ---
       await client.query(
         `
         INSERT INTO equipment_events (
@@ -134,7 +152,7 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
           source_vendor, payload_raw, created_at
         )
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,NOW())
-        ON CONFLICT (source_event_id) DO NOTHING
+        ON CONFLICT (device_key, event_type, recorded_at) DO NOTHING;
         `,
         [
           uuidv4(),
