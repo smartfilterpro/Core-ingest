@@ -31,13 +31,27 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
     await client.query('BEGIN');
 
     for (const e of events) {
-      // --- Normalize and remap field names ---
+      // --- Normalize fields ---
       const device_key = e.device_key || e.device_id || uuidv4();
       const device_id = e.device_id || e.device_key;
       const workspace_id = e.workspace_id || e.user_id || 'unknown';
       const event_time = e.timestamp || e.recorded_at || new Date().toISOString();
 
-      const temperature_f = parseFloat(e.last_temperature) || e.temperature_f || null;
+      const temperature_f =
+        e.temperature_f !== undefined
+          ? parseFloat(e.temperature_f)
+          : e.last_temperature !== undefined
+          ? parseFloat(e.last_temperature)
+          : null;
+
+      // --- Auto-convert Fahrenheit → Celsius if missing ---
+      let temperature_c: number | null = null;
+      if (e.temperature_c !== undefined) {
+        temperature_c = parseFloat(e.temperature_c);
+      } else if (temperature_f !== null) {
+        temperature_c = ((temperature_f - 32) * 5) / 9;
+      }
+
       const humidity = e.last_humidity || e.humidity || null;
       const heat_setpoint = e.last_heat_setpoint || e.heat_setpoint_f || null;
       const cool_setpoint = e.last_cool_setpoint || e.cool_setpoint_f || null;
@@ -47,13 +61,19 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
       const source_event_id = e.source_event_id || uuidv4();
 
       console.log(
-        `   ↳ ${e.source || 'unknown'} | ${device_id} | ${event_type} | status=${equipment_status} | runtime=${runtime_seconds} | temp=${temperature_f} | humidity=${humidity}`
+        `   ↳ ${e.source || 'unknown'} | ${device_id} | ${event_type} | status=${equipment_status} | runtime=${runtime_seconds} | temp=${temperature_f}F (${temperature_c?.toFixed(
+          2
+        )}C)`
       );
 
-      // --- Ensure device exists ---
+      // --- Ensure device record exists ---
       await client.query(
         `
-        INSERT INTO devices (device_key, device_id, workspace_id, device_name, manufacturer, model, source, connection_source, created_at, updated_at)
+        INSERT INTO devices (
+          device_key, device_id, workspace_id, device_name,
+          manufacturer, model, source, connection_source,
+          created_at, updated_at
+        )
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW(),NOW())
         ON CONFLICT (device_key) DO NOTHING
         `,
@@ -69,21 +89,22 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
         ]
       );
 
-      // --- Update device_status snapshot ---
+      // --- Update latest state snapshot in device_status ---
       await client.query(
         `
         INSERT INTO device_status (
           device_key, device_name, is_reachable, last_mode,
-          current_equipment_status, last_temperature, last_cool_setpoint,
-          last_heat_setpoint, updated_at
+          current_equipment_status, last_temperature, last_temperature_c,
+          last_cool_setpoint, last_heat_setpoint, updated_at
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW())
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
         ON CONFLICT (device_key) DO UPDATE
         SET 
           is_reachable = EXCLUDED.is_reachable,
           last_mode = EXCLUDED.last_mode,
           current_equipment_status = EXCLUDED.current_equipment_status,
           last_temperature = EXCLUDED.last_temperature,
+          last_temperature_c = EXCLUDED.last_temperature_c,
           last_cool_setpoint = EXCLUDED.last_cool_setpoint,
           last_heat_setpoint = EXCLUDED.last_heat_setpoint,
           updated_at = NOW()
@@ -95,23 +116,24 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
           e.last_mode || 'off',
           equipment_status,
           temperature_f,
+          temperature_c,
           cool_setpoint,
           heat_setpoint
         ]
       );
 
-      // --- Append-only insert into equipment_events ---
+      // --- Append-only event insert (historical log) ---
       await client.query(
         `
         INSERT INTO equipment_events (
           id, device_key, source_event_id, event_type, is_active,
           equipment_status, previous_status,
-          last_temperature, last_humidity,
+          last_temperature, last_temperature_c, last_humidity,
           last_heat_setpoint, last_cool_setpoint,
           runtime_seconds, recorded_at,
           source_vendor, payload_raw, created_at
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NOW())
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,NOW())
         ON CONFLICT (source_event_id) DO NOTHING
         `,
         [
@@ -123,6 +145,7 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
           equipment_status,
           e.previous_status || null,
           temperature_f,
+          temperature_c,
           humidity,
           heat_setpoint,
           cool_setpoint,
