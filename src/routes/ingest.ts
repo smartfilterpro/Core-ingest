@@ -99,53 +99,56 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
       await client.query(
         `
         INSERT INTO device_status (
-          device_key, device_name, manufacturer, source_vendor, connection_source,
-          is_reachable, last_mode, current_equipment_status,
-          last_temperature, current_temp_f, last_temperature_c,
-          last_cool_setpoint, last_heat_setpoint,
-          last_equipment_status, last_activity_at, last_seen_at, last_active, updated_at
-        )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,NOW())
-        ON CONFLICT (device_key) DO UPDATE
-        SET
-          device_name = COALESCE(EXCLUDED.device_name, device_status.device_name),
-          manufacturer = COALESCE(EXCLUDED.manufacturer, device_status.manufacturer),
-          source_vendor = COALESCE(EXCLUDED.source_vendor, device_status.source_vendor),
-          connection_source = COALESCE(EXCLUDED.connection_source, device_status.connection_source),
-          is_reachable = COALESCE(EXCLUDED.is_reachable, device_status.is_reachable),
-          last_mode = COALESCE(EXCLUDED.last_mode, device_status.last_mode),
-          current_equipment_status = COALESCE(EXCLUDED.current_equipment_status, device_status.current_equipment_status),
-          last_temperature = COALESCE(EXCLUDED.last_temperature, device_status.last_temperature),
-          current_temp_f = COALESCE(EXCLUDED.current_temp_f, device_status.current_temp_f),
-          last_temperature_c = COALESCE(EXCLUDED.last_temperature_c, device_status.last_temperature_c),
-          last_cool_setpoint = COALESCE(EXCLUDED.last_cool_setpoint, device_status.last_cool_setpoint),
-          last_heat_setpoint = COALESCE(EXCLUDED.last_heat_setpoint, device_status.last_heat_setpoint),
-          last_equipment_status = COALESCE(EXCLUDED.last_equipment_status, device_status.last_equipment_status),
-          last_activity_at = COALESCE(EXCLUDED.last_activity_at, device_status.last_activity_at),
-          last_seen_at = COALESCE(EXCLUDED.last_seen_at, device_status.last_seen_at),
-          last_active = COALESCE(EXCLUDED.last_active, device_status.last_active),
-          updated_at = NOW()
-        `,
-        [
-          device_key,
-          e.device_name || null,
-          e.manufacturer || 'Unknown',
-          e.source_vendor || e.source || 'unknown',
-          e.connection_source || e.source || 'unknown',
-          e.is_reachable ?? true,
-          e.last_mode || 'off',
-          equipment_status,
-          temperature_f,
-          temperature_f, // current_temp_f mirrors F
-          temperature_c,
-          cool_setpoint,
-          heat_setpoint,
-          e.last_equipment_status || e.equipment_status || null,
-          e.is_active ? event_time : null, // last_activity_at only when active
-          e.is_reachable ? event_time : null, // last_seen_at when reachable
-          e.is_active ?? false
-        ]
-      );
+    device_key, device_name, manufacturer, source_vendor, connection_source,
+    is_reachable, last_mode, current_equipment_status,
+    last_temperature, current_temp_f, last_temperature_c,
+    last_cool_setpoint, last_heat_setpoint,
+    last_equipment_status, last_activity_at, last_seen_at,
+    last_active, updated_at
+  )
+  VALUES (
+    $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,NOW()
+  )
+  ON CONFLICT (device_key) DO UPDATE
+  SET
+    device_name = COALESCE(EXCLUDED.device_name, device_status.device_name),
+    manufacturer = COALESCE(EXCLUDED.manufacturer, device_status.manufacturer),
+    source_vendor = COALESCE(EXCLUDED.source_vendor, device_status.source_vendor),
+    connection_source = COALESCE(EXCLUDED.connection_source, device_status.connection_source),
+    is_reachable = COALESCE(EXCLUDED.is_reachable, device_status.is_reachable),
+    last_mode = COALESCE(EXCLUDED.last_mode, device_status.last_mode),
+    current_equipment_status = COALESCE(EXCLUDED.current_equipment_status, device_status.current_equipment_status),
+    last_temperature = COALESCE(EXCLUDED.last_temperature, device_status.last_temperature),
+    current_temp_f = COALESCE(EXCLUDED.current_temp_f, device_status.current_temp_f),
+    last_temperature_c = COALESCE(EXCLUDED.last_temperature_c, device_status.last_temperature_c),
+    last_cool_setpoint = COALESCE(EXCLUDED.last_cool_setpoint, device_status.last_cool_setpoint),
+    last_heat_setpoint = COALESCE(EXCLUDED.last_heat_setpoint, device_status.last_heat_setpoint),
+    last_equipment_status = COALESCE(EXCLUDED.last_equipment_status, device_status.last_equipment_status),
+    last_activity_at = COALESCE(EXCLUDED.last_activity_at, device_status.last_activity_at),
+    last_seen_at = COALESCE(EXCLUDED.last_seen_at, device_status.last_seen_at),
+    last_active = COALESCE(EXCLUDED.last_active, device_status.last_active),
+    updated_at = NOW()
+  `,
+  [
+    device_key,                           // $1
+    e.device_name || null,                // $2
+    e.manufacturer || 'Unknown',          // $3
+    e.source_vendor || e.source || 'unknown', // $4
+    e.connection_source || e.source || 'unknown', // $5
+    e.is_reachable ?? true,               // $6
+    e.last_mode || 'off',                 // $7
+    equipment_status,                     // $8
+    temperature_f,                         // $9
+    temperature_f,                         // $10 (current_temp_f)
+    temperature_c,                         // $11
+    cool_setpoint,                         // $12
+    heat_setpoint,                         // $13
+    e.last_equipment_status || e.equipment_status || null, // $14
+    e.is_active ? event_time : null,       // $15 (TIMESTAMP)
+    e.is_reachable ? event_time : null,    // $16 (TIMESTAMP)
+    e.is_active ?? false                   // $17 (BOOLEAN)
+  ]
+);
 
       // --- Append-only equipment_events insert
       // Use composite dedupe if you've added UNIQUE(device_key, event_type, equipment_status, recorded_at)
