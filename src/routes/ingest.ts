@@ -74,7 +74,20 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
           created_at, updated_at
         )
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW(),NOW())
-        ON CONFLICT (device_key) DO NOTHING
+         ON CONFLICT (device_key) DO UPDATE
+        SET 
+        last_mode = EXCLUDED.last_mode,
+        last_is_heating = EXCLUDED.last_is_heating,
+        last_is_cooling = EXCLUDED.last_is_cooling,
+        last_is_fan_only = EXCLUDED.last_is_fan_only,
+        last_equipment_status = EXCLUDED.last_equipment_status,
+        is_reachable = EXCLUDED.is_reachable,
+        workspace_id = EXCLUDED.workspace_id,
+        last_humidity = EXCLUDED.last_humidity,
+        last_heat_setpoint = EXCLUDED.last_heat_setpoint,
+        last_cool_setpoint = EXCLUDED.last_cool_setpoint,
+        source_event_id = EXCLUDED.EXCLUDED,
+        updated_at = NOW();
         `,
         [
           device_key,
