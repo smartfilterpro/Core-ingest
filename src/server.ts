@@ -39,11 +39,20 @@ app.get("/workers/run-all", async (_req, res) => {
   console.log("[workers] Running all core workers sequentially...");
   const results: any[] = [];
   try {
-    results.push({ worker: "sessionStitcher", result: await runSessionStitcher() }); // no pool
+    // 1. Sessions — no pool
+    results.push({ worker: "sessionStitcher", result: await runSessionStitcher() });
+
+    // 2. Summaries
     results.push({ worker: "summaryWorker", result: await runSummaryWorker(pool) });
+
+    // 3. Region
     results.push({ worker: "regionAggregationWorker", result: await runRegionAggregationWorker(pool) });
+
+    // 4. Bubble
     results.push({ worker: "bubbleSummarySync", result: await bubbleSummarySync(pool) });
-    results.push({ worker: "heartbeatWorker", result: await heartbeatWorker(pool) });
+
+    // 5. Heartbeat — no pool
+    results.push({ worker: "heartbeatWorker", result: await heartbeatWorker() });
 
     res.status(200).json({ ok: true, results });
   } catch (err: any) {
@@ -78,11 +87,11 @@ const ONE_MIN = 60 * 1000;
 setInterval(async () => {
   console.log("[scheduler] Running full worker cycle...");
   try {
-    await runSessionStitcher();
+    await runSessionStitcher(); // no pool
     await runSummaryWorker(pool);
     await runRegionAggregationWorker(pool);
     await bubbleSummarySync(pool);
-    await heartbeatWorker(pool);
+    await heartbeatWorker(); // no pool
     console.log("[scheduler] ✅ Completed full worker cycle.");
   } catch (e) {
     console.error("[scheduler] ❌ Error:", (e as Error).message);
@@ -90,16 +99,11 @@ setInterval(async () => {
 }, FIFTEEN_MIN);
 
 setInterval(async () => {
-  console.log("[scheduler] Running full worker cycle...");
   try {
-    await runSessionStitcher(); // no pool
-    await runSummaryWorker(pool);
-    await runRegionAggregationWorker(pool);
-    await bubbleSummarySync(pool);
-    await heartbeatWorker(pool);
-    console.log("[scheduler] ✅ Completed full worker cycle.");
+    await heartbeatWorker(); // no pool
   } catch (e) {
-    console.error("[scheduler] ❌ Error:", (e as Error).message);
+    console.error("[heartbeat] error:", (e as Error).message);
   }
-}, FIFTEEN_MIN);
+}, ONE_MIN);
+
 })();
