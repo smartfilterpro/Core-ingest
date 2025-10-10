@@ -39,19 +39,19 @@ app.get("/workers/run-all", async (_req, res) => {
   console.log("[workers] Running all core workers sequentially...");
   const results: any[] = [];
   try {
-    // 1. Sessions — no pool
+    // 1️⃣ Sessions (no pool)
     results.push({ worker: "sessionStitcher", result: await runSessionStitcher() });
 
-    // 2. Summaries
+    // 2️⃣ Summaries (with pool)
     results.push({ worker: "summaryWorker", result: await runSummaryWorker(pool) });
 
-    // 3. Region
+    // 3️⃣ Region aggregation (with pool)
     results.push({ worker: "regionAggregationWorker", result: await runRegionAggregationWorker(pool) });
 
-    // 4. Bubble
+    // 4️⃣ Bubble summary sync (with pool)
     results.push({ worker: "bubbleSummarySync", result: await bubbleSummarySync(pool) });
 
-    // 5. Heartbeat — no pool
+    // 5️⃣ Heartbeat (no pool)
     results.push({ worker: "heartbeatWorker", result: await heartbeatWorker() });
 
     res.status(200).json({ ok: true, results });
@@ -60,6 +60,7 @@ app.get("/workers/run-all", async (_req, res) => {
     res.status(500).json({ ok: false, error: err.message, results });
   }
 });
+
 
 
 (async () => {
@@ -87,23 +88,25 @@ const ONE_MIN = 60 * 1000;
 setInterval(async () => {
   console.log("[scheduler] Running full worker cycle...");
   try {
-    await runSessionStitcher(); // no pool
-    await runSummaryWorker(pool);
-    await runRegionAggregationWorker(pool);
-    await bubbleSummarySync(pool);
-    await heartbeatWorker(); // no pool
+    await runSessionStitcher();                // 0 args
+    await runSummaryWorker(pool);              // 1 arg
+    await runRegionAggregationWorker(pool);    // 1 arg
+    await bubbleSummarySync(pool);             // 1 arg
+    await heartbeatWorker();                   // 0 args
     console.log("[scheduler] ✅ Completed full worker cycle.");
   } catch (e) {
     console.error("[scheduler] ❌ Error:", (e as Error).message);
   }
 }, FIFTEEN_MIN);
 
+// heartbeat every minute
 setInterval(async () => {
   try {
-    await heartbeatWorker(); // no pool
+    await heartbeatWorker();                   // 0 args
   } catch (e) {
     console.error("[heartbeat] error:", (e as Error).message);
   }
 }, ONE_MIN);
+
 
 })();
