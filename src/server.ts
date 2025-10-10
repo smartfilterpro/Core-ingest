@@ -57,8 +57,8 @@ app.get("/workers/run-all", async (_req, res) => {
     // 3️⃣ Region aggregation (requires pool)
     results.push({ worker: "regionAggregationWorker", result: await runRegionAggregationWorker(pool) });
 
-    // 4️⃣ Bubble summary sync (no pool)
-    results.push({ worker: "bubbleSummarySync", result: await bubbleSummarySync() });
+    // 4️⃣ Bubble summary sync (requires pool)
+    results.push({ worker: "bubbleSummarySync", result: await bubbleSummarySync(pool) });
 
     // 5️⃣ Heartbeat (no pool)
     results.push({ worker: "heartbeatWorker", result: await heartbeatWorker() });
@@ -88,21 +88,17 @@ app.get("/workers/run-all", async (_req, res) => {
     console.log(`[OK] Connected to Postgres via pool`);
   });
 
-  // ======================================================
-  //  Background Worker Scheduler (starts after app.listen)
-  // ======================================================
-
   const FIFTEEN_MIN = 15 * 60 * 1000;
   const ONE_MIN = 60 * 1000;
 
-  // Full cycle: sessions → summaries → region → bubble → heartbeat
+  // Background job scheduler
   setInterval(async () => {
     console.log("[scheduler] Running full worker cycle...");
     try {
       await runSessionStitcher();                // no pool
-      await runSummaryWorker(pool);              // needs pool
-      await runRegionAggregationWorker(pool);    // needs pool
-      await bubbleSummarySync();                 // no pool
+      await runSummaryWorker(pool);              // ✅ now passes pool
+      await runRegionAggregationWorker(pool);    // ✅
+      await bubbleSummarySync(pool);             // ✅
       await heartbeatWorker();                   // no pool
       console.log("[scheduler] ✅ Completed full worker cycle.");
     } catch (e) {
@@ -113,7 +109,7 @@ app.get("/workers/run-all", async (_req, res) => {
   // Quick heartbeat every minute
   setInterval(async () => {
     try {
-      await heartbeatWorker(); // no pool
+      await heartbeatWorker();
     } catch (e) {
       console.error("[heartbeat] error:", (e as Error).message);
     }
