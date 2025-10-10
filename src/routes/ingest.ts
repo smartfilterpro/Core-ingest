@@ -136,7 +136,12 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
     e.source_vendor || e.source || 'unknown', // $4
     e.connection_source || e.source || 'unknown', // $5
     e.is_reachable ?? true,               // $6
-    e.last_mode || 'off',                 // $7
+    e.last_mode ||
+    (e.equipment_status && e.equipment_status.toLowerCase().includes('heat')
+      ? 'heating'
+      : e.equipment_status && e.equipment_status.toLowerCase().includes('cool')
+      ? 'cooling'
+      : 'off'),
     equipment_status,                     // $8
     temperature_f,                         // $9
     temperature_f,                         // $10 (current_temp_f)
