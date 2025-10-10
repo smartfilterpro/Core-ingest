@@ -9,14 +9,14 @@ import filterResetRouter from "./routes/filterReset";
 import usersRouter from "./routes/users";
 import { workerLogsRouter } from "./routes/workerLogs";
 import { deviceStatusRouter } from "./routes/deviceStatus";
-import { runWorker } from "./runWorker";
+import { runWorker } from "./utils/runWorker";
 import {
   runSessionStitcher,
   runSummaryWorker,
   runRegionAggregationWorker,
   bubbleSummarySync,
   heartbeatWorker,
-} from "./index";
+} from "./workers/index";
 import adminSchemaRouter from "./routes/adminSchema"; // if present
 
 const app = express();
