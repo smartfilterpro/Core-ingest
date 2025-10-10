@@ -63,4 +63,24 @@ app.get("/workers/run-all", async (_req, res) => {
     // 5️⃣ Heartbeat (needs pool)
     results.push({ worker: "heartbeatWorker", result: await heartbeatWorker(pool) });
 
-    res.status(200).json({ o
+    res.status(200).json({ 
+      ok: true, 
+      message: "All workers completed successfully",
+      results 
+    });
+  } catch (err: any) {
+    console.error("[workers] Error running workers:", err);
+    res.status(500).json({ 
+      ok: false, 
+      error: err.message,
+      results 
+    });
+  }
+});
+
+// =====================
+// Start Express server
+// =====================
+app.listen(PORT, () => {
+  console.log(`🚀 SmartFilterPro Core Ingest running on port ${PORT}`);
+});
