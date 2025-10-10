@@ -39,19 +39,10 @@ app.get("/workers/run-all", async (_req, res) => {
   console.log("[workers] Running all core workers sequentially...");
   const results: any[] = [];
   try {
-    // 1. Session Stitching
-    results.push({ worker: "sessionStitcher", result: await runSessionStitcher() });
-
-    // 2. Summaries
+    results.push({ worker: "sessionStitcher", result: await runSessionStitcher() }); // no pool
     results.push({ worker: "summaryWorker", result: await runSummaryWorker(pool) });
-
-    // 3. Region Aggregation
     results.push({ worker: "regionAggregationWorker", result: await runRegionAggregationWorker(pool) });
-
-    // 4. Bubble Sync
     results.push({ worker: "bubbleSummarySync", result: await bubbleSummarySync(pool) });
-
-    // 5. Heartbeat
     results.push({ worker: "heartbeatWorker", result: await heartbeatWorker(pool) });
 
     res.status(200).json({ ok: true, results });
@@ -60,6 +51,7 @@ app.get("/workers/run-all", async (_req, res) => {
     res.status(500).json({ ok: false, error: err.message, results });
   }
 });
+
 
 (async () => {
   try {
@@ -98,10 +90,16 @@ setInterval(async () => {
 }, FIFTEEN_MIN);
 
 setInterval(async () => {
+  console.log("[scheduler] Running full worker cycle...");
   try {
+    await runSessionStitcher(); // no pool
+    await runSummaryWorker(pool);
+    await runRegionAggregationWorker(pool);
+    await bubbleSummarySync(pool);
     await heartbeatWorker(pool);
+    console.log("[scheduler] ✅ Completed full worker cycle.");
   } catch (e) {
-    console.error("[heartbeat] error:", (e as Error).message);
+    console.error("[scheduler] ❌ Error:", (e as Error).message);
   }
-}, ONE_MIN);
+}, FIFTEEN_MIN);
 })();
