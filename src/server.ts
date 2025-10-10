@@ -57,8 +57,8 @@ app.get("/workers/run-all", async (_req, res) => {
     // 3️⃣ Region aggregation (requires pool)
     results.push({ worker: "regionAggregationWorker", result: await runRegionAggregationWorker(pool) });
 
-    // 4️⃣ Bubble summary sync (requires pool)
-    results.push({ worker: "bubbleSummarySync", result: await bubbleSummarySync(pool) });
+    // 4️⃣ Bubble summary sync (no pool)
+    results.push({ worker: "bubbleSummarySync", result: await bubbleSummarySync() });
 
     // 5️⃣ Heartbeat (no pool)
     results.push({ worker: "heartbeatWorker", result: await heartbeatWorker() });
@@ -102,7 +102,7 @@ app.get("/workers/run-all", async (_req, res) => {
       await runSessionStitcher();                // no pool
       await runSummaryWorker(pool);              // needs pool
       await runRegionAggregationWorker(pool);    // needs pool
-      await bubbleSummarySync(pool);             // needs pool
+      await bubbleSummarySync();                 // no pool
       await heartbeatWorker();                   // no pool
       console.log("[scheduler] ✅ Completed full worker cycle.");
     } catch (e) {
