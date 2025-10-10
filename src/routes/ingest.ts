@@ -4,9 +4,8 @@ import { v4 as uuidv4 } from "uuid";
 
 export const ingestRouter = express.Router();
 
-/**
- * Helper functions to safely extract nested values.
- */
+/* ----------------------------- Helpers ---------------------------------- */
+
 function getHumidity(e: any): number | null {
   return (
     e.last_humidity ??
@@ -40,9 +39,39 @@ function getPressure(e: any): number | null {
   return e.pressure_hpa ?? e.payload_raw?.pressureHpa ?? null;
 }
 
-/**
- * Main Ingest Endpoint
- */
+function getSerialNumber(e: any): string | null {
+  return (
+    e.serial_number ??
+    e.payload_raw?.serialNumber ??
+    e.payload_raw?.serial ??
+    null
+  );
+}
+
+function getModelNumber(e: any): string | null {
+  return (
+    e.model_number ??
+    e.payload_raw?.modelNumber ??
+    e.payload_raw?.model ??
+    e.model ??
+    null
+  );
+}
+
+/** Resolve runtime_seconds from snake or camel; clamp to integer >= 0 */
+function getRuntimeSeconds(e: any): number | null {
+  const raw =
+    e.runtime_seconds ??
+    e.payload_raw?.runtimeSeconds ??
+    null;
+  if (raw == null) return null;
+  const n = Number(raw);
+  if (Number.isNaN(n)) return null;
+  return Math.max(0, Math.round(n));
+}
+
+/* ----------------------------- Route ------------------------------------ */
+
 ingestRouter.post("/v1/events:batch", async (req: Request, res: Response) => {
   let raw = req.body;
   let events: any[] = [];
@@ -91,39 +120,28 @@ ingestRouter.post("/v1/events:batch", async (req: Request, res: Response) => {
         temperature_c = ((temperature_f - 32) * 5) / 9;
       }
 
-      // ✅ Nested value extraction
+      // Telemetry / metadata normalization
       const humidity = getHumidity(e);
       const outdoor_temperature_f = getOutdoorTemperature(e);
       const outdoor_humidity = getOutdoorHumidity(e);
       const pressure_hpa = getPressure(e);
-
-      // ✅ Serial and model normalization
-      const serial_number =
-        e.serial_number ??
-        e.payload_raw?.serialNumber ??
-        e.payload_raw?.serial ??
-        null;
-
-      const model_number =
-        e.model_number ??
-        e.payload_raw?.modelNumber ??
-        e.payload_raw?.model ??
-        e.model ??
-        null;
+      const serial_number = getSerialNumber(e);
+      const model_number = getModelNumber(e);
 
       const heat_setpoint = e.last_heat_setpoint ?? e.heat_setpoint_f ?? null;
       const cool_setpoint = e.last_cool_setpoint ?? e.cool_setpoint_f ?? null;
-      const runtime_seconds = e.runtime_seconds ?? null;
+      const runtime_seconds = getRuntimeSeconds(e); // ✅ unified resolver
       const equipment_status = e.equipment_status || "OFF";
       const event_type = e.event_type || "UNKNOWN";
 
+      // Mint new source_event_id for end-of-session events to keep append-only
       const source_event_id: string =
-        runtime_seconds && Number(runtime_seconds) > 0
+        runtime_seconds && runtime_seconds > 0
           ? uuidv4()
           : e.source_event_id || uuidv4();
 
       console.log(
-        `   ↳ ${e.source || "unknown"} | ${device_id} | ${event_type} | status=${equipment_status} | runtime=${runtime_seconds} | temp=${temperature_f}F (${temperature_c?.toFixed(
+        `   ↳ ${e.source || "unknown"} | ${device_id} | ${event_type} | status=${equipment_status} | runtime=${runtime_seconds ?? "—"} | temp=${temperature_f}F (${temperature_c?.toFixed(
           2
         )}C) | humidity=${humidity ?? "—"} | serial=${serial_number ?? "—"} | model=${model_number ?? "—"}`
       );
@@ -184,12 +202,12 @@ ingestRouter.post("/v1/events:batch", async (req: Request, res: Response) => {
           e.device_name || null,
           e.manufacturer || "Unknown",
           e.model || null,
-          model_number,
+          model_number,            // ✅ normalized
           e.source || "unknown",
           e.connection_source || e.source || "unknown",
           e.device_type || "thermostat",
           e.firmware_version || null,
-          serial_number,
+          serial_number,           // ✅ normalized
           e.ip_address || null,
           e.frontend_id || null,
           e.zip_prefix || null,
@@ -212,7 +230,7 @@ ingestRouter.post("/v1/events:batch", async (req: Request, res: Response) => {
         ]
       );
 
-      // --- Upsert device_status ---
+      // --- Upsert device_status snapshot ---
       await client.query(
         `
         INSERT INTO device_status (
@@ -271,7 +289,7 @@ ingestRouter.post("/v1/events:batch", async (req: Request, res: Response) => {
         ]
       );
 
-      // --- Insert into equipment_events ---
+      // --- Append to equipment_events ---
       try {
         const result = await client.query(
           `
@@ -302,10 +320,10 @@ ingestRouter.post("/v1/events:batch", async (req: Request, res: Response) => {
           RETURNING id
           `,
           [
-            uuidv4(), // id
-            device_key,
-            uuidv4(), // event_id
-            source_event_id,
+            uuidv4(),                     // id
+            device_key,                   // device_key
+            uuidv4(),                     // event_id (ingest-side id)
+            source_event_id,              // upstream session id / dedupe id
             event_type,
             e.is_active ?? false,
             equipment_status,
@@ -319,7 +337,7 @@ ingestRouter.post("/v1/events:batch", async (req: Request, res: Response) => {
             e.hvac_status || null,
             e.fan_timer_mode || null,
             e.thermostat_mode || null,
-            runtime_seconds,
+            runtime_seconds,              // ✅ resolved runtime seconds
             event_time,
             new Date().toISOString(),
             e.event_timestamp || event_time,
