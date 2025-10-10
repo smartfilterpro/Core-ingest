@@ -81,29 +81,27 @@ app.get("/workers/run-all", async (_req, res) => {
   // ======================================================
 
   const FIFTEEN_MIN = 15 * 60 * 1000;
-  const ONE_MIN = 60 * 1000;
+const ONE_MIN = 60 * 1000;
 
-  // Main cycle: sessions → summaries → region → bubble → heartbeat
-  setInterval(async () => {
-    console.log("[scheduler] Running full worker cycle...");
-    try {
-      await runSessionStitcher();
-      await runWorker(pool, "summaryWorker", runSummaryWorker);
-      await runWorker(pool, "regionAggregationWorker", runRegionAggregationWorker);
-      await runWorker(pool, "bubbleSummarySync", bubbleSummarySync);
-      await runWorker(pool, "heartbeatWorker", heartbeatWorker);
-      console.log("[scheduler] ✅ Completed full worker cycle.");
-    } catch (e) {
-      console.error("[scheduler] ❌ Error:", (e as Error).message);
-    }
-  }, FIFTEEN_MIN);
+setInterval(async () => {
+  console.log("[scheduler] Running full worker cycle...");
+  try {
+    await runSessionStitcher();
+    await runSummaryWorker(pool);
+    await runRegionAggregationWorker(pool);
+    await bubbleSummarySync(pool);
+    await heartbeatWorker(pool);
+    console.log("[scheduler] ✅ Completed full worker cycle.");
+  } catch (e) {
+    console.error("[scheduler] ❌ Error:", (e as Error).message);
+  }
+}, FIFTEEN_MIN);
 
-  // Quick heartbeat every minute
-  setInterval(async () => {
-    try {
-      await runWorker(pool, "heartbeatWorker", heartbeatWorker);
-    } catch (e) {
-      console.error("[heartbeat] error:", (e as Error).message);
-    }
-  }, ONE_MIN);
+setInterval(async () => {
+  try {
+    await heartbeatWorker(pool);
+  } catch (e) {
+    console.error("[heartbeat] error:", (e as Error).message);
+  }
+}, ONE_MIN);
 })();
