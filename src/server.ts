@@ -48,10 +48,10 @@ app.get("/workers/run-all", async (_req, res) => {
   console.log("[workers] Running all core workers sequentially...");
   const results: any[] = [];
   try {
-    // 1️⃣ Sessions (no pool)
+    // 1️⃣ Session stitcher (no pool)
     results.push({ worker: "sessionStitcher", result: await runSessionStitcher() });
 
-    // 2️⃣ Summaries (requires pool)
+    // 2️⃣ Summary worker (requires pool)
     results.push({ worker: "summaryWorker", result: await runSummaryWorker(pool) });
 
     // 3️⃣ Region aggregation (requires pool)
@@ -95,14 +95,14 @@ app.get("/workers/run-all", async (_req, res) => {
   const FIFTEEN_MIN = 15 * 60 * 1000;
   const ONE_MIN = 60 * 1000;
 
-  // Main cycle
+  // Full cycle: sessions → summaries → region → bubble → heartbeat
   setInterval(async () => {
     console.log("[scheduler] Running full worker cycle...");
     try {
       await runSessionStitcher();                // no pool
-      await runSummaryWorker(pool);              // requires pool
-      await runRegionAggregationWorker(pool);    // requires pool
-      await bubbleSummarySync(pool);             // requires pool
+      await runSummaryWorker(pool);              // needs pool
+      await runRegionAggregationWorker(pool);    // needs pool
+      await bubbleSummarySync(pool);             // needs pool
       await heartbeatWorker();                   // no pool
       console.log("[scheduler] ✅ Completed full worker cycle.");
     } catch (e) {
@@ -113,7 +113,7 @@ app.get("/workers/run-all", async (_req, res) => {
   // Quick heartbeat every minute
   setInterval(async () => {
     try {
-      await heartbeatWorker();                   // no pool
+      await heartbeatWorker(); // no pool
     } catch (e) {
       console.error("[heartbeat] error:", (e as Error).message);
     }
