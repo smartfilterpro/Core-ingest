@@ -35,24 +35,23 @@ app.use("/workers/logs", workerLogsRouter);
 app.use("/device-status", deviceStatusRouter);
 app.use("/admin/schema", adminSchemaRouter);
 
-// Manual, sequential run (no AI here)
 app.get("/workers/run-all", async (_req, res) => {
-  console.log("[workers] Running all workers sequentially (Core only)...");
+  console.log("[workers] Running all core workers sequentially...");
   const results: any[] = [];
   try {
-    // 1) sessions
+    // 1. Session Stitching
     results.push({ worker: "sessionStitcher", result: await runSessionStitcher() });
 
-    // 2) summaries
+    // 2. Summaries
     results.push({ worker: "summaryWorker", result: await runSummaryWorker(pool) });
 
-    // 3) region aggregates
+    // 3. Region Aggregation
     results.push({ worker: "regionAggregationWorker", result: await runRegionAggregationWorker(pool) });
 
-    // 4) bubble sync (summaries → Bubble)
+    // 4. Bubble Sync
     results.push({ worker: "bubbleSummarySync", result: await bubbleSummarySync(pool) });
 
-    // 5) heartbeat
+    // 5. Heartbeat
     results.push({ worker: "heartbeatWorker", result: await heartbeatWorker(pool) });
 
     res.status(200).json({ ok: true, results });
