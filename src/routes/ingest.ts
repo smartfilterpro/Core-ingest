@@ -99,61 +99,80 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
       await client.query(
         `
         INSERT INTO device_status (
-    device_key, device_name, manufacturer, source_vendor, connection_source,
-    is_reachable, last_mode, current_equipment_status,
-    last_temperature, current_temp_f, last_temperature_c,
-    last_cool_setpoint, last_heat_setpoint,
-    last_equipment_status, last_activity_at, last_seen_at,
-    last_active, updated_at
-  )
-  VALUES (
-    $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,NOW()
-  )
-  ON CONFLICT (device_key) DO UPDATE
-  SET
-    device_name = COALESCE(EXCLUDED.device_name, device_status.device_name),
-    manufacturer = COALESCE(EXCLUDED.manufacturer, device_status.manufacturer),
-    source_vendor = COALESCE(EXCLUDED.source_vendor, device_status.source_vendor),
-    connection_source = COALESCE(EXCLUDED.connection_source, device_status.connection_source),
-    is_reachable = COALESCE(EXCLUDED.is_reachable, device_status.is_reachable),
-    last_mode = COALESCE(EXCLUDED.last_mode, device_status.last_mode),
-    current_equipment_status = COALESCE(EXCLUDED.current_equipment_status, device_status.current_equipment_status),
-    last_temperature = COALESCE(EXCLUDED.last_temperature, device_status.last_temperature),
-    current_temp_f = COALESCE(EXCLUDED.current_temp_f, device_status.current_temp_f),
-    last_temperature_c = COALESCE(EXCLUDED.last_temperature_c, device_status.last_temperature_c),
-    last_cool_setpoint = COALESCE(EXCLUDED.last_cool_setpoint, device_status.last_cool_setpoint),
-    last_heat_setpoint = COALESCE(EXCLUDED.last_heat_setpoint, device_status.last_heat_setpoint),
-    last_equipment_status = COALESCE(EXCLUDED.last_equipment_status, device_status.last_equipment_status),
-    last_activity_at = COALESCE(EXCLUDED.last_activity_at, device_status.last_activity_at),
-    last_seen_at = COALESCE(EXCLUDED.last_seen_at, device_status.last_seen_at),
-    last_active = COALESCE(EXCLUDED.last_active, device_status.last_active),
-    updated_at = NOW()
-  `,
-  [
-    device_key,                           // $1
-    e.device_name || null,                // $2
-    e.manufacturer || 'Unknown',          // $3
-    e.source_vendor || e.source || 'unknown', // $4
-    e.connection_source || e.source || 'unknown', // $5
-    e.is_reachable ?? true,               // $6
-    e.last_mode ||
-    (e.equipment_status && e.equipment_status.toLowerCase().includes('heat')
-      ? 'heating'
-      : e.equipment_status && e.equipment_status.toLowerCase().includes('cool')
-      ? 'cooling'
-      : 'off'),
-    equipment_status,                     // $8
-    temperature_f,                         // $9
-    temperature_f,                         // $10 (current_temp_f)
-    temperature_c,                         // $11
-    cool_setpoint,                         // $12
-    heat_setpoint,                         // $13
-    e.last_equipment_status || e.equipment_status || null, // $14
-    e.is_active ? event_time : null,       // $15 (TIMESTAMP)
-    e.is_reachable ? event_time : null,    // $16 (TIMESTAMP)
-    e.is_active ?? false                   // $17 (BOOLEAN)
-  ]
-);
+          device_key, device_name, manufacturer, source_vendor, connection_source,
+          is_reachable, last_mode, current_equipment_status,
+          last_temperature, current_temp_f, last_temperature_c,
+          last_cool_setpoint, last_heat_setpoint, last_equipment_status,
+          last_humidity, last_is_heating, last_is_cooling, last_is_fan_only,
+          use_forced_air_for_heat, frontend_id, is_running,
+          last_fan_timer_until, is_fan_timer_on, last_fan_mode,
+          last_activity_at, last_seen_at, last_active, updated_at
+        )
+        VALUES (
+          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,
+          $12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,NOW()
+        )
+        ON CONFLICT (device_key) DO UPDATE
+        SET
+          device_name = COALESCE(EXCLUDED.device_name, device_status.device_name),
+          manufacturer = COALESCE(EXCLUDED.manufacturer, device_status.manufacturer),
+          source_vendor = COALESCE(EXCLUDED.source_vendor, device_status.source_vendor),
+          connection_source = COALESCE(EXCLUDED.connection_source, device_status.connection_source),
+          is_reachable = COALESCE(EXCLUDED.is_reachable, device_status.is_reachable),
+          last_mode = COALESCE(EXCLUDED.last_mode, device_status.last_mode),
+          current_equipment_status = COALESCE(EXCLUDED.current_equipment_status, device_status.current_equipment_status),
+          last_temperature = COALESCE(EXCLUDED.last_temperature, device_status.last_temperature),
+          current_temp_f = COALESCE(EXCLUDED.current_temp_f, device_status.current_temp_f),
+          last_temperature_c = COALESCE(EXCLUDED.last_temperature_c, device_status.last_temperature_c),
+          last_cool_setpoint = COALESCE(EXCLUDED.last_cool_setpoint, device_status.last_cool_setpoint),
+          last_heat_setpoint = COALESCE(EXCLUDED.last_heat_setpoint, device_status.last_heat_setpoint),
+          last_equipment_status = COALESCE(EXCLUDED.last_equipment_status, device_status.last_equipment_status),
+          last_humidity = COALESCE(EXCLUDED.last_humidity, device_status.last_humidity),
+          last_is_heating = COALESCE(EXCLUDED.last_is_heating, device_status.last_is_heating),
+          last_is_cooling = COALESCE(EXCLUDED.last_is_cooling, device_status.last_is_cooling),
+          last_is_fan_only = COALESCE(EXCLUDED.last_is_fan_only, device_status.last_is_fan_only),
+          use_forced_air_for_heat = COALESCE(EXCLUDED.use_forced_air_for_heat, device_status.use_forced_air_for_heat),
+          frontend_id = COALESCE(EXCLUDED.frontend_id, device_status.frontend_id),
+          is_running = COALESCE(EXCLUDED.is_running, device_status.is_running),
+          last_fan_timer_until = COALESCE(EXCLUDED.last_fan_timer_until, device_status.last_fan_timer_until),
+          is_fan_timer_on = COALESCE(EXCLUDED.is_fan_timer_on, device_status.is_fan_timer_on),
+          last_fan_mode = COALESCE(EXCLUDED.last_fan_mode, device_status.last_fan_mode),
+          last_activity_at = COALESCE(EXCLUDED.last_activity_at, device_status.last_activity_at),
+          last_seen_at = COALESCE(EXCLUDED.last_seen_at, device_status.last_seen_at),
+          last_active = COALESCE(EXCLUDED.last_active, device_status.last_active),
+          updated_at = NOW()
+        `,
+        [
+          device_key,
+          e.device_name || null,
+          e.manufacturer || 'Unknown',
+          e.source_vendor || e.source || 'unknown',
+          e.connection_source || e.source || 'unknown',
+          e.is_reachable ?? true,
+          e.last_mode || 'off',
+          equipment_status,
+          temperature_f,
+          temperature_f,
+          temperature_c,
+          cool_setpoint,
+          heat_setpoint,
+          e.last_equipment_status || e.equipment_status || null,
+          humidity,
+          e.last_is_heating ?? null,
+          e.last_is_cooling ?? null,
+          e.last_is_fan_only ?? null,
+          e.use_forced_air_for_heat ?? null,
+          e.frontend_id || null,
+          e.is_running ?? e.is_active ?? false,
+          e.last_fan_timer_until ?? null,
+          e.is_fan_timer_on ?? false,
+          e.last_fan_mode || null,
+          e.is_active ? event_time : null,
+          e.is_reachable ? event_time : null,
+          e.is_active ?? false
+        ]
+      );
+
 
       // --- Append-only equipment_events insert
       // Use composite dedupe if you've added UNIQUE(device_key, event_type, equipment_status, recorded_at)
