@@ -4,11 +4,50 @@ import { v4 as uuidv4 } from 'uuid';
 
 export const ingestRouter = express.Router();
 
+/**
+ * Helper functions to safely extract nested values.
+ */
+function getHumidity(e: any): number | null {
+  return (
+    e.last_humidity ??
+    e.humidity ??
+    e.payload_raw?.humidity ??
+    e.payload_raw?.currentHumidity ??
+    e.payload_raw?.ambientHumidity ??
+    null
+  );
+}
+
+function getOutdoorTemperature(e: any): number | null {
+  return (
+    e.outdoor_temperature_f ??
+    e.payload_raw?.outdoorTemperatureF ??
+    e.payload_raw?.outdoorTempF ??
+    null
+  );
+}
+
+function getOutdoorHumidity(e: any): number | null {
+  return (
+    e.outdoor_humidity ??
+    e.payload_raw?.outdoorHumidity ??
+    e.payload_raw?.outdoorHumidityPercent ??
+    null
+  );
+}
+
+function getPressure(e: any): number | null {
+  return e.pressure_hpa ?? e.payload_raw?.pressureHpa ?? null;
+}
+
+/**
+ * Main Ingest Endpoint
+ */
 ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
   let raw = req.body;
   let events: any[] = [];
 
-  // Normalize: accept {events:[...]} | [...] | single object
+  // Normalize array/object shape
   if (Array.isArray(raw)) {
     for (const item of raw) {
       if (item?.events && Array.isArray(item.events)) events.push(...item.events);
@@ -37,6 +76,7 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
       const workspace_id = e.workspace_id || e.user_id || 'unknown';
       const event_time: string = e.timestamp || e.recorded_at || new Date().toISOString();
 
+      // Temperature normalization
       const temperature_f =
         e.temperature_f !== undefined
           ? parseFloat(e.temperature_f)
@@ -44,7 +84,6 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
           ? parseFloat(e.last_temperature)
           : null;
 
-      // Auto-convert F → C if missing
       let temperature_c: number | null = null;
       if (e.temperature_c !== undefined) {
         temperature_c = parseFloat(e.temperature_c);
@@ -52,15 +91,18 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
         temperature_c = ((temperature_f - 32) * 5) / 9;
       }
 
-      const humidity = e.last_humidity ?? e.humidity ?? null;
+      // ✅ Updated humidity and outdoor value normalization
+      const humidity = getHumidity(e);
+      const outdoor_temperature_f = getOutdoorTemperature(e);
+      const outdoor_humidity = getOutdoorHumidity(e);
+      const pressure_hpa = getPressure(e);
+
       const heat_setpoint = e.last_heat_setpoint ?? e.heat_setpoint_f ?? null;
       const cool_setpoint = e.last_cool_setpoint ?? e.cool_setpoint_f ?? null;
       const runtime_seconds = e.runtime_seconds ?? null;
       const equipment_status = e.equipment_status || 'OFF';
       const event_type = e.event_type || 'UNKNOWN';
 
-      // IMPORTANT: runtime stop events reuse the same source_event_id upstream.
-      // To ensure append-only logging, mint a new UUID when runtime_seconds > 0.
       const source_event_id: string =
         runtime_seconds && Number(runtime_seconds) > 0
           ? uuidv4()
@@ -69,93 +111,92 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
       console.log(
         `   ↳ ${e.source || 'unknown'} | ${device_id} | ${event_type} | status=${equipment_status} | runtime=${runtime_seconds} | temp=${temperature_f}F (${temperature_c?.toFixed(
           2
-        )}C)`
+        )}C) | humidity=${humidity ?? '—'}`
       );
 
-      // --- Ensure device exists (idempotent) ---
-          await client.query(
-      `
-      INSERT INTO devices (
-        device_key, device_id, workspace_id, user_id,
-        device_name, manufacturer, model, source, connection_source,
-        device_type, firmware_version, serial_number, ip_address,
-        frontend_id, zip_prefix, zip_code_prefix, timezone,
-        filter_target_hours, filter_usage_percent, use_forced_air_for_heat,
-        last_mode, last_is_cooling, last_is_heating, last_is_fan_only,
-        last_equipment_status, is_reachable,
-        last_temperature, last_humidity, last_heat_setpoint, last_cool_setpoint,
-        source_event_id,
-        created_at, updated_at
-      )
-      VALUES (
-        $1,$2,$3,$4,
-        $5,$6,$7,$8,$9,
-        $10,$11,$12,$13,
-        $14,$15,$16,$17,
-        $18,$19,$20,
-        $21,$22,$23,$24,
-        $25,$26,
-        $27,$28,$29,$30,
-        $31,
-        NOW(),NOW()
-      )
-      ON CONFLICT (device_key) DO UPDATE
-      SET
-        device_name = COALESCE(EXCLUDED.device_name, devices.device_name),
-        manufacturer = COALESCE(EXCLUDED.manufacturer, devices.manufacturer),
-        model = COALESCE(EXCLUDED.model, devices.model),
-        source = COALESCE(EXCLUDED.source, devices.source),
-        connection_source = COALESCE(EXCLUDED.connection_source, devices.connection_source),
-        device_type = COALESCE(EXCLUDED.device_type, devices.device_type),
-        firmware_version = COALESCE(EXCLUDED.firmware_version, devices.firmware_version),
-        serial_number = COALESCE(EXCLUDED.serial_number, devices.serial_number),
-        ip_address = COALESCE(EXCLUDED.ip_address, devices.ip_address),
-        is_reachable = COALESCE(EXCLUDED.is_reachable, devices.is_reachable),
-        last_mode = COALESCE(EXCLUDED.last_mode, devices.last_mode),
-        last_equipment_status = COALESCE(EXCLUDED.last_equipment_status, devices.last_equipment_status),
-        last_temperature = COALESCE(EXCLUDED.last_temperature, devices.last_temperature),
-        last_humidity = COALESCE(EXCLUDED.last_humidity, devices.last_humidity),
-        last_heat_setpoint = COALESCE(EXCLUDED.last_heat_setpoint, devices.last_heat_setpoint),
-        last_cool_setpoint = COALESCE(EXCLUDED.last_cool_setpoint, devices.last_cool_setpoint),
-        updated_at = NOW()
-      `,
-      [
-        device_key,
-        e.device_id || e.device_key || null,
-        e.workspace_id || e.user_id || 'unknown',
-        e.user_id || null,
-        e.device_name || null,
-        e.manufacturer || 'Unknown',
-        e.model || null,
-        e.source || 'unknown',
-        e.connection_source || e.source || 'unknown',
-        e.device_type || 'thermostat',
-        e.firmware_version || null,
-        e.serial_number || null,
-        e.ip_address || null,
-        e.frontend_id || null,
-        e.zip_prefix || null,
-        e.zip_code_prefix || e.zip_prefix || null,
-        e.timezone || null,
-        e.filter_target_hours ?? 100,
-        e.filter_usage_percent ?? 0,
-        e.use_forced_air_for_heat ?? null,
-        e.last_mode || null,
-        e.last_is_cooling ?? null,
-        e.last_is_heating ?? null,
-        e.last_is_fan_only ?? null,
-        e.last_equipment_status || e.equipment_status || null,
-        e.is_reachable ?? true,
-        e.last_temperature ?? e.temperature_f ?? null,
-        e.last_humidity ?? e.humidity ?? null,
-        e.last_heat_setpoint ?? null,
-        e.last_cool_setpoint ?? null,
-        e.source_event_id ?? null
-      ]
-    );
+      // --- Upsert devices table ---
+      await client.query(
+        `
+        INSERT INTO devices (
+          device_key, device_id, workspace_id, user_id,
+          device_name, manufacturer, model, source, connection_source,
+          device_type, firmware_version, serial_number, ip_address,
+          frontend_id, zip_prefix, zip_code_prefix, timezone,
+          filter_target_hours, filter_usage_percent, use_forced_air_for_heat,
+          last_mode, last_is_cooling, last_is_heating, last_is_fan_only,
+          last_equipment_status, is_reachable,
+          last_temperature, last_humidity, last_heat_setpoint, last_cool_setpoint,
+          source_event_id,
+          created_at, updated_at
+        )
+        VALUES (
+          $1,$2,$3,$4,
+          $5,$6,$7,$8,$9,
+          $10,$11,$12,$13,
+          $14,$15,$16,$17,
+          $18,$19,$20,
+          $21,$22,$23,$24,
+          $25,$26,
+          $27,$28,$29,$30,
+          $31,
+          NOW(),NOW()
+        )
+        ON CONFLICT (device_key) DO UPDATE
+        SET
+          device_name = COALESCE(EXCLUDED.device_name, devices.device_name),
+          manufacturer = COALESCE(EXCLUDED.manufacturer, devices.manufacturer),
+          model = COALESCE(EXCLUDED.model, devices.model),
+          source = COALESCE(EXCLUDED.source, devices.source),
+          connection_source = COALESCE(EXCLUDED.connection_source, devices.connection_source),
+          device_type = COALESCE(EXCLUDED.device_type, devices.device_type),
+          firmware_version = COALESCE(EXCLUDED.firmware_version, devices.firmware_version),
+          serial_number = COALESCE(EXCLUDED.serial_number, devices.serial_number),
+          ip_address = COALESCE(EXCLUDED.ip_address, devices.ip_address),
+          is_reachable = COALESCE(EXCLUDED.is_reachable, devices.is_reachable),
+          last_mode = COALESCE(EXCLUDED.last_mode, devices.last_mode),
+          last_equipment_status = COALESCE(EXCLUDED.last_equipment_status, devices.last_equipment_status),
+          last_temperature = COALESCE(EXCLUDED.last_temperature, devices.last_temperature),
+          last_humidity = COALESCE(EXCLUDED.last_humidity, devices.last_humidity),
+          last_heat_setpoint = COALESCE(EXCLUDED.last_heat_setpoint, devices.last_heat_setpoint),
+          last_cool_setpoint = COALESCE(EXCLUDED.last_cool_setpoint, devices.last_cool_setpoint),
+          updated_at = NOW()
+        `,
+        [
+          device_key,
+          device_id,
+          workspace_id,
+          e.user_id || null,
+          e.device_name || null,
+          e.manufacturer || 'Unknown',
+          e.model || null,
+          e.source || 'unknown',
+          e.connection_source || e.source || 'unknown',
+          e.device_type || 'thermostat',
+          e.firmware_version || null,
+          e.serial_number || null,
+          e.ip_address || null,
+          e.frontend_id || null,
+          e.zip_prefix || null,
+          e.zip_code_prefix || e.zip_prefix || null,
+          e.timezone || null,
+          e.filter_target_hours ?? 100,
+          e.filter_usage_percent ?? 0,
+          e.use_forced_air_for_heat ?? null,
+          e.last_mode || null,
+          e.last_is_cooling ?? null,
+          e.last_is_heating ?? null,
+          e.last_is_fan_only ?? null,
+          e.last_equipment_status || e.equipment_status || null,
+          e.is_reachable ?? true,
+          e.last_temperature ?? e.temperature_f ?? null,
+          humidity,
+          e.last_heat_setpoint ?? null,
+          e.last_cool_setpoint ?? null,
+          e.source_event_id ?? null
+        ]
+      );
 
-
-      // --- Upsert device_status snapshot (preserve non-null with COALESCE on UPDATE) ---
+      // --- Upsert device_status ---
       await client.query(
         `
         INSERT INTO device_status (
@@ -176,30 +217,11 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
         SET
           device_name = COALESCE(EXCLUDED.device_name, device_status.device_name),
           manufacturer = COALESCE(EXCLUDED.manufacturer, device_status.manufacturer),
-          source_vendor = COALESCE(EXCLUDED.source_vendor, device_status.source_vendor),
-          connection_source = COALESCE(EXCLUDED.connection_source, device_status.connection_source),
-          is_reachable = COALESCE(EXCLUDED.is_reachable, device_status.is_reachable),
-          last_mode = COALESCE(EXCLUDED.last_mode, device_status.last_mode),
+          last_humidity = COALESCE(EXCLUDED.last_humidity, device_status.last_humidity),
           current_equipment_status = COALESCE(EXCLUDED.current_equipment_status, device_status.current_equipment_status),
           last_temperature = COALESCE(EXCLUDED.last_temperature, device_status.last_temperature),
-          current_temp_f = COALESCE(EXCLUDED.current_temp_f, device_status.current_temp_f),
-          last_temperature_c = COALESCE(EXCLUDED.last_temperature_c, device_status.last_temperature_c),
           last_cool_setpoint = COALESCE(EXCLUDED.last_cool_setpoint, device_status.last_cool_setpoint),
           last_heat_setpoint = COALESCE(EXCLUDED.last_heat_setpoint, device_status.last_heat_setpoint),
-          last_equipment_status = COALESCE(EXCLUDED.last_equipment_status, device_status.last_equipment_status),
-          last_humidity = COALESCE(EXCLUDED.last_humidity, device_status.last_humidity),
-          last_is_heating = COALESCE(EXCLUDED.last_is_heating, device_status.last_is_heating),
-          last_is_cooling = COALESCE(EXCLUDED.last_is_cooling, device_status.last_is_cooling),
-          last_is_fan_only = COALESCE(EXCLUDED.last_is_fan_only, device_status.last_is_fan_only),
-          use_forced_air_for_heat = COALESCE(EXCLUDED.use_forced_air_for_heat, device_status.use_forced_air_for_heat),
-          frontend_id = COALESCE(EXCLUDED.frontend_id, device_status.frontend_id),
-          is_running = COALESCE(EXCLUDED.is_running, device_status.is_running),
-          last_fan_timer_until = COALESCE(EXCLUDED.last_fan_timer_until, device_status.last_fan_timer_until),
-          is_fan_timer_on = COALESCE(EXCLUDED.is_fan_timer_on, device_status.is_fan_timer_on),
-          last_fan_mode = COALESCE(EXCLUDED.last_fan_mode, device_status.last_fan_mode),
-          last_activity_at = COALESCE(EXCLUDED.last_activity_at, device_status.last_activity_at),
-          last_seen_at = COALESCE(EXCLUDED.last_seen_at, device_status.last_seen_at),
-          last_active = COALESCE(EXCLUDED.last_active, device_status.last_active),
           updated_at = NOW()
         `,
         [
@@ -233,76 +255,74 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
         ]
       );
 
-
-      // --- Append-only equipment_events insert
-      // Use composite dedupe if you've added UNIQUE(device_key, event_type, equipment_status, recorded_at)
-    try {
-      const event_id = uuidv4();
-      const result = await client.query(
-        `
-        INSERT INTO equipment_events (
-          id, device_key, event_id, source_event_id,
-          event_type, is_active, equipment_status, previous_status,
-          last_temperature, last_temperature_c, last_humidity, humidity,
-          last_heat_setpoint, last_cool_setpoint,
-          hvac_status, fan_timer_mode, thermostat_mode,
-          runtime_seconds,
-          observed_at, recorded_at, event_timestamp,
-          outdoor_temperature_f, outdoor_humidity, pressure_hpa,
-          source_vendor, payload_raw, created_at
-        )
-        VALUES (
-          $1,$2,$3,$4,
-          $5,$6,$7,$8,
-          $9,$10,$11,$12,
-          $13,$14,
-          $15,$16,$17,
-          $18,
-          $19,$20,$21,
-          $22,$23,$24,
-          $25,$26,NOW()
-        )
-        ON CONFLICT (device_key, event_type, equipment_status, recorded_at)
-        DO NOTHING
-        RETURNING id
-        `,
-        [
-          uuidv4(),                       // $1 id
-          device_key,                     // $2
-          event_id,                       // $3 event_id
-          source_event_id,                // $4
-          event_type,                     // $5
-          e.is_active ?? false,           // $6
-          equipment_status,               // $7
-          e.previous_status || null,      // $8
-          temperature_f,                  // $9
-          temperature_c,                  // $10
-          humidity,                       // $11 (last_humidity)
-          humidity,                       // $12 (alias)
-          heat_setpoint,                  // $13
-          cool_setpoint,                  // $14
-          e.hvac_status || null,          // $15
-          e.fan_timer_mode || null,       // $16
-          e.thermostat_mode || null,      // $17
-          runtime_seconds,                // $18
-          event_time,                     // $19 (observed_at)
-          new Date().toISOString(),       // $20 (recorded_at)
-          e.event_timestamp || event_time, // $21
-          e.outdoor_temperature_f || null, // $22
-          e.outdoor_humidity || null,      // $23
-          e.pressure_hpa || null,         // $24
-          e.source_vendor || e.source || 'unknown', // $25
-          JSON.stringify(e)               // $26
-        ]
-      );
-      console.log(`   ↳ [equipment_events] rows inserted: ${result.rowCount}`);
-    } catch (evErr: any) {
-      if (evErr?.code === '23505') {
-        console.warn(`   ⚠️ [equipment_events] duplicate skipped: ${source_event_id}`);
-      } else {
-        console.error('   ❌ [equipment_events] insert error:', evErr);
+      // --- Insert into equipment_events ---
+      try {
+        const result = await client.query(
+          `
+          INSERT INTO equipment_events (
+            id, device_key, event_id, source_event_id,
+            event_type, is_active, equipment_status, previous_status,
+            last_temperature, last_temperature_c, last_humidity, humidity,
+            last_heat_setpoint, last_cool_setpoint,
+            hvac_status, fan_timer_mode, thermostat_mode,
+            runtime_seconds,
+            observed_at, recorded_at, event_timestamp,
+            outdoor_temperature_f, outdoor_humidity, pressure_hpa,
+            source_vendor, payload_raw, created_at
+          )
+          VALUES (
+            $1,$2,$3,$4,
+            $5,$6,$7,$8,
+            $9,$10,$11,$12,
+            $13,$14,
+            $15,$16,$17,
+            $18,
+            $19,$20,$21,
+            $22,$23,$24,
+            $25,$26,NOW()
+          )
+          ON CONFLICT (device_key, event_type, equipment_status, recorded_at)
+          DO NOTHING
+          RETURNING id
+          `,
+          [
+            uuidv4(),                     // $1 id
+            device_key,                   // $2
+            uuidv4(),                     // $3 event_id
+            source_event_id,              // $4
+            event_type,                   // $5
+            e.is_active ?? false,         // $6
+            equipment_status,             // $7
+            e.previous_status || null,    // $8
+            temperature_f,                // $9
+            temperature_c,                // $10
+            humidity,                     // $11
+            humidity,                     // $12
+            heat_setpoint,                // $13
+            cool_setpoint,                // $14
+            e.hvac_status || null,        // $15
+            e.fan_timer_mode || null,     // $16
+            e.thermostat_mode || null,    // $17
+            runtime_seconds,              // $18
+            event_time,                   // $19
+            new Date().toISOString(),     // $20
+            e.event_timestamp || event_time, // $21
+            outdoor_temperature_f,        // $22
+            outdoor_humidity,             // $23
+            pressure_hpa,                 // $24
+            e.source_vendor || e.source || 'unknown', // $25
+            JSON.stringify(e)             // $26
+          ]
+        );
+        console.log(`   ↳ [equipment_events] rows inserted: ${result.rowCount}`);
+      } catch (evErr: any) {
+        if (evErr?.code === '23505') {
+          console.warn(`   ⚠️ [equipment_events] duplicate skipped: ${source_event_id}`);
+        } else {
+          console.error('   ❌ [equipment_events] insert error:', evErr);
+        }
       }
-    }
+
       inserted.push(device_key);
     }
 
