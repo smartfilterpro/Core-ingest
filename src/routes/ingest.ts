@@ -176,52 +176,73 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
 
       // --- Append-only equipment_events insert
       // Use composite dedupe if you've added UNIQUE(device_key, event_type, equipment_status, recorded_at)
-      try {
-        const result = await client.query(
-          `
-          INSERT INTO equipment_events (
-            id, device_key, source_event_id, event_type, is_active,
-            equipment_status, previous_status,
-            last_temperature, last_temperature_c, last_humidity,
-            last_heat_setpoint, last_cool_setpoint,
-            runtime_seconds, recorded_at,
-            source_vendor, payload_raw, created_at
-          )
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,NOW())
-          ON CONFLICT (device_key, event_type, equipment_status, recorded_at) DO NOTHING
-          RETURNING id
-          `,
-          [
-            uuidv4(),
-            device_key,
-            source_event_id,
-            event_type,
-            e.is_active ?? false,
-            equipment_status,
-            e.previous_status || null,
-            temperature_f,
-            temperature_c,
-            humidity,
-            heat_setpoint,
-            cool_setpoint,
-            runtime_seconds,
-            event_time,
-            e.source_vendor || e.source || 'unknown',
-            JSON.stringify(e) // keep raw payload for audit/debug
-          ]
-        );
-        console.log(`   ↳ [equipment_events] rows inserted: ${result.rowCount}`);
-      } catch (evErr: any) {
-        // If a legacy UNIQUE(source_event_id) still exists, swallow duplicates and continue
-        if (evErr?.code === '23505') {
-          console.warn(
-            `   ⚠️ [equipment_events] duplicate under legacy source_event_id unique: ${source_event_id} (skipped)`
-          );
-        } else {
-          console.error('   ❌ [equipment_events] insert error:', evErr);
-        }
+    try {
+      const event_id = uuidv4();
+      const result = await client.query(
+        `
+        INSERT INTO equipment_events (
+          id, device_key, event_id, source_event_id,
+          event_type, is_active, equipment_status, previous_status,
+          last_temperature, last_temperature_c, last_humidity, humidity,
+          last_heat_setpoint, last_cool_setpoint,
+          hvac_status, fan_timer_mode, thermostat_mode,
+          runtime_seconds,
+          observed_at, recorded_at, event_timestamp,
+          outdoor_temperature_f, outdoor_humidity, pressure_hpa,
+          source_vendor, payload_raw, created_at
+        )
+        VALUES (
+          $1,$2,$3,$4,
+          $5,$6,$7,$8,
+          $9,$10,$11,$12,
+          $13,$14,
+          $15,$16,$17,
+          $18,
+          $19,$20,$21,
+          $22,$23,$24,
+          $25,$26,NOW()
+        )
+        ON CONFLICT (device_key, event_type, equipment_status, recorded_at)
+        DO NOTHING
+        RETURNING id
+        `,
+        [
+          uuidv4(),                       // $1 id
+          device_key,                     // $2
+          event_id,                       // $3 event_id
+          source_event_id,                // $4
+          event_type,                     // $5
+          e.is_active ?? false,           // $6
+          equipment_status,               // $7
+          e.previous_status || null,      // $8
+          temperature_f,                  // $9
+          temperature_c,                  // $10
+          humidity,                       // $11 (last_humidity)
+          humidity,                       // $12 (alias)
+          heat_setpoint,                  // $13
+          cool_setpoint,                  // $14
+          e.hvac_status || null,          // $15
+          e.fan_timer_mode || null,       // $16
+          e.thermostat_mode || null,      // $17
+          runtime_seconds,                // $18
+          event_time,                     // $19 (observed_at)
+          new Date().toISOString(),       // $20 (recorded_at)
+          e.event_timestamp || event_time, // $21
+          e.outdoor_temperature_f || null, // $22
+          e.outdoor_humidity || null,      // $23
+          e.pressure_hpa || null,         // $24
+          e.source_vendor || e.source || 'unknown', // $25
+          JSON.stringify(e)               // $26
+        ]
+      );
+      console.log(`   ↳ [equipment_events] rows inserted: ${result.rowCount}`);
+    } catch (evErr: any) {
+      if (evErr?.code === '23505') {
+        console.warn(`   ⚠️ [equipment_events] duplicate skipped: ${source_event_id}`);
+      } else {
+        console.error('   ❌ [equipment_events] insert error:', evErr);
       }
-
+    }
       inserted.push(device_key);
     }
 
