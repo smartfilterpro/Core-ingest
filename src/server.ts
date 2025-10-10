@@ -9,85 +9,61 @@ import filterResetRouter from "./routes/filterReset";
 import usersRouter from "./routes/users";
 import { workerLogsRouter } from "./routes/workerLogs";
 import { deviceStatusRouter } from "./routes/deviceStatus";
+import { runWorker } from "./runWorker";
 import {
   runSessionStitcher,
   runSummaryWorker,
   runRegionAggregationWorker,
-  runAIWorker,
-} from "./workers";
-import adminSchemaRouter from "./routes/adminSchema";
+  bubbleSummarySync,
+  heartbeatWorker,
+} from "./index";
+import adminSchemaRouter from "./routes/adminSchema"; // if present
 
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-// Middleware
 app.use(cors());
-app.use(bodyParser.json({ limit: "5mb" }));
+app.use(bodyParser.json({ limit: "2mb" }));
 
-// Health check
-app.get("/health", async (_req, res) => {
-  try {
-    const r = await pool.query("SELECT NOW() as now");
-    res.status(200).json({ ok: true, db_time: r.rows[0].now });
-  } catch (err: any) {
-    console.error("[server] Health check error:", err.message);
-    res.status(500).json({ ok: false, error: err.message });
-  }
-});
-
-// Mount routers
+// Routes
 app.use("/ingest", ingestRouter);
 app.use("/ingest", ingestV2Router);
-app.use("/ingest", deviceStatusRouter);
 app.use("/health", healthRouter);
 app.use("/filter-reset", filterResetRouter);
 app.use("/users", usersRouter);
-app.use("/workers", workerLogsRouter);
+app.use("/workers/logs", workerLogsRouter);
+app.use("/device-status", deviceStatusRouter);
 app.use("/admin/schema", adminSchemaRouter);
 
-// Worker endpoints
+// Manual, sequential run (no AI here)
 app.get("/workers/run-all", async (_req, res) => {
-  console.log("[workers] Running all workers sequentially...");
+  console.log("[workers] Running all workers sequentially (Core only)...");
   const results: any[] = [];
   try {
+    // 1) sessions
     results.push({ worker: "sessionStitcher", result: await runSessionStitcher() });
+
+    // 2) summaries
     results.push({ worker: "summaryWorker", result: await runSummaryWorker(pool) });
-    results.push({
-      worker: "regionAggregationWorker",
-      result: await runRegionAggregationWorker(pool),
-    });
-    results.push({ worker: "aiWorker", result: await runAIWorker(pool) });
+
+    // 3) region aggregates
+    results.push({ worker: "regionAggregationWorker", result: await runRegionAggregationWorker(pool) });
+
+    // 4) bubble sync (summaries → Bubble)
+    results.push({ worker: "bubbleSummarySync", result: await bubbleSummarySync(pool) });
+
+    // 5) heartbeat
+    results.push({ worker: "heartbeatWorker", result: await heartbeatWorker(pool) });
+
     res.status(200).json({ ok: true, results });
   } catch (err: any) {
-    console.error("[workers/run-all] Error:", err);
-    res.status(500).json({ ok: false, error: err.message });
+    console.error("[workers] run-all failed:", err);
+    res.status(500).json({ ok: false, error: err.message, results });
   }
 });
 
-app.get("/workers/session-stitcher", async (_req, res) => {
-  const result = await runSessionStitcher();
-  res.status(result.ok ? 200 : 500).json(result);
-});
-
-app.get("/workers/summary", async (_req, res) => {
-  const result = await runSummaryWorker(pool);
-  res.status(200).json({ ok: true, result });
-});
-
-app.get("/workers/region", async (_req, res) => {
-  const result = await runRegionAggregationWorker(pool);
-  res.status(200).json({ ok: true, result });
-});
-
-app.get("/workers/ai", async (_req, res) => {
-  const result = await runAIWorker(pool);
-  res.status(200).json({ ok: true, result });
-});
-
-// Run migrations and start server
 (async () => {
   try {
-    // Import and run migrations
     const { runMigrations } = await import("./runMigrations");
     await runMigrations();
     console.log("[OK] Database migrations completed");
