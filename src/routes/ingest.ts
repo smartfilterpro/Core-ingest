@@ -73,27 +73,87 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
       );
 
       // --- Ensure device exists (idempotent) ---
-      await client.query(
-        `
-        INSERT INTO devices (
-          device_key, device_id, workspace_id, device_name,
-          manufacturer, model, source, connection_source,
-          created_at, updated_at
-        )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW(),NOW())
-        ON CONFLICT (device_key) DO NOTHING
-        `,
-        [
-          device_key,
-          device_id,
-          workspace_id,
-          e.device_name || null,
-          e.manufacturer || 'Unknown',
-          e.model || null,
-          e.source || 'unknown',
-          e.connection_source || e.source || 'unknown'
-        ]
-      );
+          await client.query(
+      `
+      INSERT INTO devices (
+        device_key, device_id, workspace_id, user_id,
+        device_name, manufacturer, model, source, connection_source,
+        device_type, firmware_version, serial_number, ip_address,
+        frontend_id, zip_prefix, zip_code_prefix, timezone,
+        filter_target_hours, filter_usage_percent, use_forced_air_for_heat,
+        last_mode, last_is_cooling, last_is_heating, last_is_fan_only,
+        last_equipment_status, is_reachable,
+        last_temperature, last_humidity, last_heat_setpoint, last_cool_setpoint,
+        source_event_id,
+        created_at, updated_at
+      )
+      VALUES (
+        $1,$2,$3,$4,
+        $5,$6,$7,$8,$9,
+        $10,$11,$12,$13,
+        $14,$15,$16,$17,
+        $18,$19,$20,
+        $21,$22,$23,$24,
+        $25,$26,
+        $27,$28,$29,$30,
+        $31,
+        NOW(),NOW()
+      )
+      ON CONFLICT (device_key) DO UPDATE
+      SET
+        device_name = COALESCE(EXCLUDED.device_name, devices.device_name),
+        manufacturer = COALESCE(EXCLUDED.manufacturer, devices.manufacturer),
+        model = COALESCE(EXCLUDED.model, devices.model),
+        source = COALESCE(EXCLUDED.source, devices.source),
+        connection_source = COALESCE(EXCLUDED.connection_source, devices.connection_source),
+        device_type = COALESCE(EXCLUDED.device_type, devices.device_type),
+        firmware_version = COALESCE(EXCLUDED.firmware_version, devices.firmware_version),
+        serial_number = COALESCE(EXCLUDED.serial_number, devices.serial_number),
+        ip_address = COALESCE(EXCLUDED.ip_address, devices.ip_address),
+        is_reachable = COALESCE(EXCLUDED.is_reachable, devices.is_reachable),
+        last_mode = COALESCE(EXCLUDED.last_mode, devices.last_mode),
+        last_equipment_status = COALESCE(EXCLUDED.last_equipment_status, devices.last_equipment_status),
+        last_temperature = COALESCE(EXCLUDED.last_temperature, devices.last_temperature),
+        last_humidity = COALESCE(EXCLUDED.last_humidity, devices.last_humidity),
+        last_heat_setpoint = COALESCE(EXCLUDED.last_heat_setpoint, devices.last_heat_setpoint),
+        last_cool_setpoint = COALESCE(EXCLUDED.last_cool_setpoint, devices.last_cool_setpoint),
+        updated_at = NOW()
+      `,
+      [
+        device_key,
+        e.device_id || e.device_key || null,
+        e.workspace_id || e.user_id || 'unknown',
+        e.user_id || null,
+        e.device_name || null,
+        e.manufacturer || 'Unknown',
+        e.model || null,
+        e.source || 'unknown',
+        e.connection_source || e.source || 'unknown',
+        e.device_type || 'thermostat',
+        e.firmware_version || null,
+        e.serial_number || null,
+        e.ip_address || null,
+        e.frontend_id || null,
+        e.zip_prefix || null,
+        e.zip_code_prefix || e.zip_prefix || null,
+        e.timezone || null,
+        e.filter_target_hours ?? 100,
+        e.filter_usage_percent ?? 0,
+        e.use_forced_air_for_heat ?? null,
+        e.last_mode || null,
+        e.last_is_cooling ?? null,
+        e.last_is_heating ?? null,
+        e.last_is_fan_only ?? null,
+        e.last_equipment_status || e.equipment_status || null,
+        e.is_reachable ?? true,
+        e.last_temperature ?? e.temperature_f ?? null,
+        e.last_humidity ?? e.humidity ?? null,
+        e.last_heat_setpoint ?? null,
+        e.last_cool_setpoint ?? null,
+        e.source_event_id ?? null
+      ]
+    );
+
 
       // --- Upsert device_status snapshot (preserve non-null with COALESCE on UPDATE) ---
       await client.query(
