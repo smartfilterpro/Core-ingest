@@ -1,6 +1,6 @@
-import express, { Request, Response } from 'express';
-import { pool } from '../db/pool';
-import { v4 as uuidv4 } from 'uuid';
+import express, { Request, Response } from "express";
+import { pool } from "../db/pool";
+import { v4 as uuidv4 } from "uuid";
 
 export const ingestRouter = express.Router();
 
@@ -43,7 +43,7 @@ function getPressure(e: any): number | null {
 /**
  * Main Ingest Endpoint
  */
-ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
+ingestRouter.post("/v1/events:batch", async (req: Request, res: Response) => {
   let raw = req.body;
   let events: any[] = [];
 
@@ -62,18 +62,18 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
   const client = await pool.connect();
   const inserted: string[] = [];
 
-  console.log('\n📬 [ingest] Full incoming payload:');
+  console.log("\n📬 [ingest] Full incoming payload:");
   console.dir(req.body, { depth: null });
   console.log(`📥 [ingest] Normalized ${events.length} event(s)`);
 
   try {
-    await client.query('BEGIN');
+    await client.query("BEGIN");
 
     for (const e of events) {
       // --- Normalize fields ---
       const device_key = e.device_key || e.device_id || uuidv4();
       const device_id = e.device_id || e.device_key || null;
-      const workspace_id = e.workspace_id || e.user_id || 'unknown';
+      const workspace_id = e.workspace_id || e.user_id || "unknown";
       const event_time: string = e.timestamp || e.recorded_at || new Date().toISOString();
 
       // Temperature normalization
@@ -91,17 +91,31 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
         temperature_c = ((temperature_f - 32) * 5) / 9;
       }
 
-      // ✅ Updated humidity and outdoor value normalization
+      // ✅ Nested value extraction
       const humidity = getHumidity(e);
       const outdoor_temperature_f = getOutdoorTemperature(e);
       const outdoor_humidity = getOutdoorHumidity(e);
       const pressure_hpa = getPressure(e);
 
+      // ✅ Serial and model normalization
+      const serial_number =
+        e.serial_number ??
+        e.payload_raw?.serialNumber ??
+        e.payload_raw?.serial ??
+        null;
+
+      const model_number =
+        e.model_number ??
+        e.payload_raw?.modelNumber ??
+        e.payload_raw?.model ??
+        e.model ??
+        null;
+
       const heat_setpoint = e.last_heat_setpoint ?? e.heat_setpoint_f ?? null;
       const cool_setpoint = e.last_cool_setpoint ?? e.cool_setpoint_f ?? null;
       const runtime_seconds = e.runtime_seconds ?? null;
-      const equipment_status = e.equipment_status || 'OFF';
-      const event_type = e.event_type || 'UNKNOWN';
+      const equipment_status = e.equipment_status || "OFF";
+      const event_type = e.event_type || "UNKNOWN";
 
       const source_event_id: string =
         runtime_seconds && Number(runtime_seconds) > 0
@@ -109,9 +123,9 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
           : e.source_event_id || uuidv4();
 
       console.log(
-        `   ↳ ${e.source || 'unknown'} | ${device_id} | ${event_type} | status=${equipment_status} | runtime=${runtime_seconds} | temp=${temperature_f}F (${temperature_c?.toFixed(
+        `   ↳ ${e.source || "unknown"} | ${device_id} | ${event_type} | status=${equipment_status} | runtime=${runtime_seconds} | temp=${temperature_f}F (${temperature_c?.toFixed(
           2
-        )}C) | humidity=${humidity ?? '—'}`
+        )}C) | humidity=${humidity ?? "—"} | serial=${serial_number ?? "—"} | model=${model_number ?? "—"}`
       );
 
       // --- Upsert devices table ---
@@ -119,7 +133,7 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
         `
         INSERT INTO devices (
           device_key, device_id, workspace_id, user_id,
-          device_name, manufacturer, model, source, connection_source,
+          device_name, manufacturer, model, model_number, source, connection_source,
           device_type, firmware_version, serial_number, ip_address,
           frontend_id, zip_prefix, zip_code_prefix, timezone,
           filter_target_hours, filter_usage_percent, use_forced_air_for_heat,
@@ -131,14 +145,14 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
         )
         VALUES (
           $1,$2,$3,$4,
-          $5,$6,$7,$8,$9,
-          $10,$11,$12,$13,
-          $14,$15,$16,$17,
-          $18,$19,$20,
-          $21,$22,$23,$24,
-          $25,$26,
-          $27,$28,$29,$30,
-          $31,
+          $5,$6,$7,$8,$9,$10,
+          $11,$12,$13,$14,
+          $15,$16,$17,$18,
+          $19,$20,$21,
+          $22,$23,$24,$25,
+          $26,$27,
+          $28,$29,$30,$31,
+          $32,
           NOW(),NOW()
         )
         ON CONFLICT (device_key) DO UPDATE
@@ -146,6 +160,7 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
           device_name = COALESCE(EXCLUDED.device_name, devices.device_name),
           manufacturer = COALESCE(EXCLUDED.manufacturer, devices.manufacturer),
           model = COALESCE(EXCLUDED.model, devices.model),
+          model_number = COALESCE(EXCLUDED.model_number, devices.model_number),
           source = COALESCE(EXCLUDED.source, devices.source),
           connection_source = COALESCE(EXCLUDED.connection_source, devices.connection_source),
           device_type = COALESCE(EXCLUDED.device_type, devices.device_type),
@@ -167,13 +182,14 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
           workspace_id,
           e.user_id || null,
           e.device_name || null,
-          e.manufacturer || 'Unknown',
+          e.manufacturer || "Unknown",
           e.model || null,
-          e.source || 'unknown',
-          e.connection_source || e.source || 'unknown',
-          e.device_type || 'thermostat',
+          model_number,
+          e.source || "unknown",
+          e.connection_source || e.source || "unknown",
+          e.device_type || "thermostat",
           e.firmware_version || null,
-          e.serial_number || null,
+          serial_number,
           e.ip_address || null,
           e.frontend_id || null,
           e.zip_prefix || null,
@@ -227,11 +243,11 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
         [
           device_key,
           e.device_name || null,
-          e.manufacturer || 'Unknown',
-          e.source_vendor || e.source || 'unknown',
-          e.connection_source || e.source || 'unknown',
+          e.manufacturer || "Unknown",
+          e.source_vendor || e.source || "unknown",
+          e.connection_source || e.source || "unknown",
           e.is_reachable ?? true,
-          e.last_mode || 'off',
+          e.last_mode || "off",
           equipment_status,
           temperature_f,
           temperature_f,
@@ -286,61 +302,61 @@ ingestRouter.post('/v1/events:batch', async (req: Request, res: Response) => {
           RETURNING id
           `,
           [
-            uuidv4(),                     // $1 id
-            device_key,                   // $2
-            uuidv4(),                     // $3 event_id
-            source_event_id,              // $4
-            event_type,                   // $5
-            e.is_active ?? false,         // $6
-            equipment_status,             // $7
-            e.previous_status || null,    // $8
-            temperature_f,                // $9
-            temperature_c,                // $10
-            humidity,                     // $11
-            humidity,                     // $12
-            heat_setpoint,                // $13
-            cool_setpoint,                // $14
-            e.hvac_status || null,        // $15
-            e.fan_timer_mode || null,     // $16
-            e.thermostat_mode || null,    // $17
-            runtime_seconds,              // $18
-            event_time,                   // $19
-            new Date().toISOString(),     // $20
-            e.event_timestamp || event_time, // $21
-            outdoor_temperature_f,        // $22
-            outdoor_humidity,             // $23
-            pressure_hpa,                 // $24
-            e.source_vendor || e.source || 'unknown', // $25
-            JSON.stringify(e)             // $26
+            uuidv4(), // id
+            device_key,
+            uuidv4(), // event_id
+            source_event_id,
+            event_type,
+            e.is_active ?? false,
+            equipment_status,
+            e.previous_status || null,
+            temperature_f,
+            temperature_c,
+            humidity,
+            humidity,
+            heat_setpoint,
+            cool_setpoint,
+            e.hvac_status || null,
+            e.fan_timer_mode || null,
+            e.thermostat_mode || null,
+            runtime_seconds,
+            event_time,
+            new Date().toISOString(),
+            e.event_timestamp || event_time,
+            outdoor_temperature_f,
+            outdoor_humidity,
+            pressure_hpa,
+            e.source_vendor || e.source || "unknown",
+            JSON.stringify(e)
           ]
         );
         console.log(`   ↳ [equipment_events] rows inserted: ${result.rowCount}`);
       } catch (evErr: any) {
-        if (evErr?.code === '23505') {
+        if (evErr?.code === "23505") {
           console.warn(`   ⚠️ [equipment_events] duplicate skipped: ${source_event_id}`);
         } else {
-          console.error('   ❌ [equipment_events] insert error:', evErr);
+          console.error("   ❌ [equipment_events] insert error:", evErr);
         }
       }
 
       inserted.push(device_key);
     }
 
-    await client.query('COMMIT');
+    await client.query("COMMIT");
     console.log(`📤 [ingest] ✅ Inserted ${inserted.length} event(s)\n`);
     return res.status(200).json({ ok: true, count: inserted.length });
   } catch (err: any) {
-    await client.query('ROLLBACK');
-    console.error('[ingest] ❌ Error processing batch:', err);
+    await client.query("ROLLBACK");
+    console.error("[ingest] ❌ Error processing batch:", err);
     return res.status(500).json({ ok: false, error: err.message });
   } finally {
     client.release();
   }
 });
 
-ingestRouter.get('/health', async (_req: Request, res: Response) => {
+ingestRouter.get("/health", async (_req: Request, res: Response) => {
   try {
-    const r = await pool.query('SELECT NOW() AS now');
+    const r = await pool.query("SELECT NOW() AS now");
     res.json({ ok: true, db_time: r.rows[0].now });
   } catch (err: any) {
     res.status(500).json({ ok: false, error: err.message });
