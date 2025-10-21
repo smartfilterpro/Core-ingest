@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import bodyParser from "body-parser";
 import { pool } from "./db/pool";
+import { startCronJobs } from './cron';
 
 // Routes
 import ingestRouter from "./routes/ingest";
@@ -80,4 +81,6 @@ app.listen(PORT, () => {
   console.log(`🚀 SmartFilterPro Core Ingest running securely on port ${PORT}`);
   if (!process.env.CORE_API_KEY)
     console.warn("⚠️ CORE_API_KEY not set — external posts will fail auth!");
+
+  startCronJobs();
 });
