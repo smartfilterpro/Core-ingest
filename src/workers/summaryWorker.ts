@@ -11,7 +11,7 @@ export async function runSummaryWorker(pool: Pool) {
         SUM(COALESCE(rs.runtime_seconds, 0))::INT AS runtime_seconds_total,
         COUNT(*) AS runtime_sessions_count,
         AVG(COALESCE(rs.runtime_seconds, 0))::NUMERIC AS avg_runtime,
-        AVG(ev.last_temperature)::NUMERIC AS avg_temperature
+        AVG(ev.last_temperature)::NUMERIC AS avg_temperature,
         AVG(ev.last_humidity)::NUMERIC AS avg_humidity
       FROM runtime_sessions rs
       JOIN devices d ON d.device_key = rs.device_key
