@@ -292,13 +292,13 @@ async function maybeCloseStale(
   );
 
   await client.query(
-    `
-    UPDATE runtime_sessions
-    SET ended_at = $1, duration_seconds = $2, updated_at = NOW(), terminated_reason = 'tail_close'
-    WHERE session_id = $3
-  `,
-    [ended_at, dur, state.open_session_id]
-  );
+  `
+  UPDATE runtime_sessions
+  SET ended_at = $1, runtime_seconds = $2, updated_at = NOW(), terminated_reason = 'tail_close'
+  WHERE session_id = $3
+`,
+  [ended_at, dur, state.open_session_id]
+);
 
   // Update cumulative hours_used_total for device_states
   const lastReset = state.last_reset_ts ? dayjs.utc(state.last_reset_ts) : null;
