@@ -1,6 +1,5 @@
 import express, { Request, Response } from 'express';
 import { pool } from '../db/pool';
-
 const router = express.Router();
 
 /**
@@ -23,6 +22,7 @@ router.get('/daily', async (req: Request, res: Response) => {
         runtime_seconds_total,
         runtime_sessions_count,
         avg_temperature,
+        avg_humidity,
         updated_at
       FROM summaries_daily
       WHERE device_id = $1
@@ -58,6 +58,7 @@ router.get('/device/:deviceId', async (req: Request, res: Response) => {
         SUM(runtime_seconds_total) as total_runtime_seconds,
         SUM(runtime_sessions_count) as total_sessions,
         AVG(avg_temperature) as avg_temperature,
+        AVG(avg_humidity) as avg_humidity,
         COUNT(*) as days_recorded
       FROM summaries_daily
       WHERE device_id = $1
