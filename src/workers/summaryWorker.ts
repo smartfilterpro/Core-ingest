@@ -28,6 +28,7 @@ export async function runSummaryWorker(pool: Pool) {
       runtime_seconds_total,
       runtime_sessions_count,
       avg_temperature,
+      avg_humidity,
       updated_at
     )
     SELECT
