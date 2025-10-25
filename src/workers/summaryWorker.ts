@@ -46,6 +46,7 @@ export async function runSummaryWorker(pool: Pool) {
       runtime_seconds_total = EXCLUDED.runtime_seconds_total,
       runtime_sessions_count = EXCLUDED.runtime_sessions_count,
       avg_temperature = EXCLUDED.avg_temperature,
+      avg_humidity = EXCLUDED.avg_humidity,
       updated_at = NOW();
   `;
   try {
