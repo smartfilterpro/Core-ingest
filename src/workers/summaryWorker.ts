@@ -3,7 +3,6 @@ import { Pool } from 'pg';
 
 export async function runSummaryWorker(pool: Pool) {
   console.log('📊 Starting daily summary worker...');
-
   const query = `
     WITH daily AS (
       SELECT
@@ -20,6 +19,7 @@ export async function runSummaryWorker(pool: Pool) {
         AND ev.recorded_at BETWEEN rs.started_at AND COALESCE(rs.ended_at, rs.started_at)
       WHERE rs.started_at >= CURRENT_DATE - INTERVAL '7 days'
         AND rs.started_at IS NOT NULL
+        AND d.device_id IS NOT NULL
       GROUP BY d.device_id, DATE(rs.started_at)
     )
     INSERT INTO summaries_daily (
@@ -45,7 +45,6 @@ export async function runSummaryWorker(pool: Pool) {
       avg_temperature = EXCLUDED.avg_temperature,
       updated_at = NOW();
   `;
-
   try {
     const result = await pool.query(query);
     console.log(`✅ Summary worker complete. ${result.rowCount ?? 0} records updated.`);
