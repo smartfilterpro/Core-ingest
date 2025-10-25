@@ -292,25 +292,28 @@ async function maybeCloseStale(
   );
 
   await client.query(
-  `
-  UPDATE runtime_sessions
-  SET ended_at = $1, runtime_seconds = $2, updated_at = NOW(), terminated_reason = 'tail_close'
-  WHERE session_id = $3
-`,
-  [ended_at, dur, state.open_session_id]
-);
+    `
+    UPDATE runtime_sessions
+    SET ended_at = $1, runtime_seconds = $2, updated_at = NOW(), terminated_reason = 'tail_close'
+    WHERE session_id = $3
+  `,
+    [ended_at, dur, state.open_session_id]
+  );
 
   // Update cumulative hours_used_total for device_states
   const lastReset = state.last_reset_ts ? dayjs.utc(state.last_reset_ts) : null;
   const addHours = dur / 3600.0;
-  let newHours = state.hours_used_total + addHours;
+  
+  // FIXED: Use parseFloat to prevent string concatenation
+  let newHours = parseFloat(String(state.hours_used_total || 0)) + addHours;
 
   if (lastReset && dayjs.utc(started_at).isBefore(lastReset)) {
     const postResetDur = Math.max(
       0,
       dayjs.utc(ended_at).diff(lastReset, "second")
     );
-    newHours = state.hours_used_total + postResetDur / 3600.0;
+    // FIXED: Use parseFloat to prevent string concatenation
+    newHours = parseFloat(String(state.hours_used_total || 0)) + postResetDur / 3600.0;
   }
 
   await client.query(
