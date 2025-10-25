@@ -10,7 +10,7 @@ type SessionRow = {
   device_key: string;
   started_at: string | null;
   ended_at: string | null;
-  duration_seconds: number | null;
+  runtime_seconds: number | null;
   mode: string | null;
   equipment_status: string | null;
   start_temperature: number | null;
