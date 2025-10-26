@@ -9,6 +9,12 @@ export async function runSummaryWorker(pool: Pool) {
         d.device_id,
         DATE(rs.started_at) AS date,
         SUM(COALESCE(rs.runtime_seconds, 0))::INT AS runtime_seconds_total,
+ SUM(CASE WHEN rs.mode = 'heat' THEN COALESCE(rs.runtime_seconds, 0) ELSE 0 END)::INT AS runtime_seconds_heat,
+  SUM(CASE WHEN rs.mode = 'cool' THEN COALESCE(rs.runtime_seconds, 0) ELSE 0 END)::INT AS runtime_seconds_cool,
+  SUM(CASE WHEN rs.mode = 'fan' THEN COALESCE(rs.runtime_seconds, 0) ELSE 0 END)::INT AS runtime_seconds_fan,
+  SUM(CASE WHEN rs.mode = 'auxheat' THEN COALESCE(rs.runtime_seconds, 0) ELSE 0 END)::INT AS runtime_seconds_auxheat,
+  SUM(CASE WHEN rs.mode NOT IN ('heat', 'cool', 'fan', 'auxheat') OR rs.mode IS NULL THEN COALESCE(rs.runtime_seconds, 0) ELSE 0 END)::INT AS runtime_seconds_unknown,
+  
         COUNT(*) AS runtime_sessions_count,
         AVG(COALESCE(rs.runtime_seconds, 0))::NUMERIC AS avg_runtime,
         AVG(ev.last_temperature)::NUMERIC AS avg_temperature,
