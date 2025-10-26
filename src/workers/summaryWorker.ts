@@ -1,7 +1,15 @@
 // src/workers/summaryWorker.ts
 import { Pool } from 'pg';
 
-export async function runSummaryWorker(pool: Pool) {
+export async function runSummaryWorker(pool: Pool, options?: { fullHistory?: boolean; days?: number }) {
+const mode = options?.fullHistory ? 'ALL HISTORY' : `LAST ${options?.days || 7} DAYS`;
+  console.log(`📊 Starting daily summary worker (${mode})...`);
+
+  // Build date filter based on mode
+  const dateFilter = options?.fullHistory
+    ? '' // No date filter = process all data
+    : `AND rs.started_at >= CURRENT_DATE - INTERVAL '${options?.days || 7} days'`;
+
   console.log('📊 Starting daily summary worker...');
   const query = `
     WITH daily AS (
@@ -24,7 +32,9 @@ export async function runSummaryWorker(pool: Pool) {
       LEFT JOIN equipment_events ev
         ON rs.device_key = ev.device_key
         AND ev.recorded_at BETWEEN rs.started_at AND COALESCE(rs.ended_at, rs.started_at)
-      WHERE rs.started_at >= CURRENT_DATE - INTERVAL '7 days'
+      WHERE rs.started_at IS NOT NULL
+        AND d.device_id IS NOT NULL
+        ${dateFilter}
         AND rs.started_at IS NOT NULL
         AND d.device_id IS NOT NULL
       GROUP BY d.device_id, DATE(rs.started_at)
@@ -63,4 +73,25 @@ export async function runSummaryWorker(pool: Pool) {
     console.error('❌ Summary worker error:', err.message);
     return { success: false, error: err.message };
   }
+}
+
+// CLI entry point
+if (require.main === module) {
+  const { pool } = require('../db/pool');
+
+  // Parse command line arguments
+  const args = process.argv.slice(2);
+  const fullHistory = args.includes('--all') || args.includes('--full');
+  const daysArg = args.find(arg => arg.startsWith('--days='));
+  const days = daysArg ? parseInt(daysArg.split('=')[1]) : 7;
+
+  runSummaryWorker(pool, { fullHistory, days })
+    .then((result) => {
+      console.log('✅ Summary worker finished:', result);
+      process.exit(result.success ? 0 : 1);
+    })
+    .catch((err) => {
+      console.error('❌ Fatal error:', err);
+      process.exit(1);
+    });
 }
