@@ -11,8 +11,8 @@
     "dev": "nodemon src/server.ts",
     "migrate": "ts-node src/runMigrations.ts",
     "worker:session": "ts-node src/workers/sessionStitcher.ts",
-    "worker:summary": "ts-node src/workers/summaryWorker.ts --run",
-    "worker:summary:hourly": "ts-node src/workers/summaryWorker.ts --hourly",
+    "worker:summary": "ts-node src/workers/summaryWorker.ts",
+"worker:summary:all": "ts-node src/workers/summaryWorker.ts --all",
     "worker:region": "ts-node src/workers/regionAggregationWorker.ts",
     "worker:ai": "ts-node src/workers/aiWorker.ts",
     "postinstall": "npm run build"
