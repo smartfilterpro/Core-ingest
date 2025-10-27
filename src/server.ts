@@ -86,7 +86,35 @@ app.get("/workers/backfill-summaries", async (_req, res) => {
     res.status(500).json({ ok: false, error: err.message });
   }
 });
-
+/* ----------------------- Diagnostic: Check Mode Data ---------------------- */
+app.get("/diagnostic/mode-data/:deviceId", async (req, res) => {
+  const { deviceId } = req.params;
+  console.log("[diagnostic] Checking mode data for device:", deviceId);
+  
+  try {
+    // Get mode breakdown from runtime_sessions
+    const result = await pool.query(`
+      SELECT 
+        rs.mode,
+        COUNT(*) as session_count,
+        SUM(rs.runtime_seconds) as total_seconds
+      FROM runtime_sessions rs
+      JOIN devices d ON d.device_key = rs.device_key
+      WHERE d.device_id = $1
+      GROUP BY rs.mode
+      ORDER BY total_seconds DESC
+    `, [deviceId]);
+    
+    res.json({
+      ok: true,
+      device_id: deviceId,
+      mode_breakdown: result.rows
+    });
+  } catch (err: any) {
+    console.error("[diagnostic] Error:", err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
 /* --------------------------- Global Error Trap -------------------------- */
 app.use((err: any, _req: any, res: any, _next: any) => {
   console.error("💥 Uncaught server error:", err);
