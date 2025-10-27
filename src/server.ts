@@ -115,6 +115,38 @@ app.get("/diagnostic/mode-data/:deviceId", async (req, res) => {
     res.status(500).json({ ok: false, error: err.message });
   }
 });
+/* ----------------------- Diagnostic: Check Available Fields ---------------------- */
+app.get("/diagnostic/fields/:deviceId", async (req, res) => {
+  const { deviceId } = req.params;
+  
+  try {
+    // Check runtime_sessions fields
+    const rsResult = await pool.query(`
+      SELECT *
+      FROM runtime_sessions rs
+      JOIN devices d ON d.device_key = rs.device_key
+      WHERE d.device_id = $1
+      LIMIT 1
+    `, [deviceId]);
+    
+    // Check equipment_events fields
+    const eeResult = await pool.query(`
+      SELECT *
+      FROM equipment_events ee
+      WHERE ee.device_key = (SELECT device_key FROM devices WHERE device_id = $1 LIMIT 1)
+      LIMIT 1
+    `, [deviceId]);
+    
+    res.json({
+      ok: true,
+      device_id: deviceId,
+      runtime_sessions_sample: rsResult.rows[0] || null,
+      equipment_events_sample: eeResult.rows[0] || null
+    });
+  } catch (err: any) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
 /* --------------------------- Global Error Trap -------------------------- */
 app.use((err: any, _req: any, res: any, _next: any) => {
   console.error("💥 Uncaught server error:", err);
