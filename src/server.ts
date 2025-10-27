@@ -70,6 +70,23 @@ app.get("/workers/run-all", async (_req, res) => {
   }
 });
 
+/* ----------------------- Backfill Historical Data ---------------------- */
+app.get("/workers/backfill-summaries", async (_req, res) => {
+  console.log("[workers] Backfilling ALL historical summary data...");
+  try {
+    const result = await runSummaryWorker(pool, { fullHistory: true });
+    res.status(200).json({
+      ok: true,
+      message: "Historical data backfill completed",
+      result,
+      note: "All summaries_daily records have been updated with mode breakdown data"
+    });
+  } catch (err: any) {
+    console.error("[workers] Error backfilling summaries:", err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 /* --------------------------- Global Error Trap -------------------------- */
 app.use((err: any, _req: any, res: any, _next: any) => {
   console.error("💥 Uncaught server error:", err);
