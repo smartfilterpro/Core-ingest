@@ -147,6 +147,31 @@ app.get("/diagnostic/fields/:deviceId", async (req, res) => {
     res.status(500).json({ ok: false, error: err.message });
   }
 });
+/* ----------------------- Diagnostic: Check Thermostat Modes ---------------------- */
+app.get("/diagnostic/thermostat-modes/:deviceId", async (req, res) => {
+  const { deviceId } = req.params;
+  
+  try {
+    const result = await pool.query(`
+      SELECT 
+        thermostat_mode,
+        COUNT(*) as event_count
+      FROM equipment_events ee
+      WHERE ee.device_key = $1
+        AND thermostat_mode IS NOT NULL
+      GROUP BY thermostat_mode
+      ORDER BY event_count DESC
+    `, [deviceId]);
+    
+    res.json({
+      ok: true,
+      device_id: deviceId,
+      thermostat_modes: result.rows
+    });
+  } catch (err: any) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
 /* --------------------------- Global Error Trap -------------------------- */
 app.use((err: any, _req: any, res: any, _next: any) => {
   console.error("💥 Uncaught server error:", err);
