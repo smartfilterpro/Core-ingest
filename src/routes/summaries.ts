@@ -9,11 +9,16 @@ const router = express.Router();
 router.get('/daily', async (req: Request, res: Response) => {
   try {
     const { device_id, days = 30 } = req.query;
-    
+
     if (!device_id) {
       return res.status(400).json({ ok: false, error: 'device_id is required' });
     }
-    
+
+    // Build date filter - support 'all' for lifetime data
+    const dateFilter = days === 'all'
+      ? ''
+      : `AND date >= CURRENT_DATE - INTERVAL '${parseInt(days as string)} days'`;
+
     const { rows } = await pool.query(
       `
       SELECT
@@ -40,7 +45,7 @@ router.get('/daily', async (req: Request, res: Response) => {
         updated_at
       FROM summaries_daily
       WHERE device_id = $1
-        AND date >= CURRENT_DATE - INTERVAL '${parseInt(days as string)} days'
+        ${dateFilter}
       ORDER BY date DESC
       `,
       [device_id]
