@@ -181,6 +181,112 @@ async function ensureDeviceState(
   return reread.rows[0];
 }
 
+/**
+ * Process an event that includes runtime_seconds and previous_status.
+ * Creates a completed session directly from the posted runtime data.
+ */
+async function processRuntimeEvent(
+  client: PoolClient,
+  device_key: string,
+  event: any,
+  state: DeviceStateRow
+) {
+  const runtime_seconds = event.runtime_seconds;
+  const previous_status = event.previous_status;
+  const recorded_at = event.recorded_at;
+
+  if (!previous_status || runtime_seconds <= 0) return;
+
+  // Derive mode from previous_status (what it WAS doing)
+  const mode = deriveMode(previous_status, null);
+
+  // Calculate timestamps for the session
+  const ended_at = dayjs.utc(recorded_at).toISOString();
+  const started_at = dayjs.utc(recorded_at).subtract(runtime_seconds, 'second').toISOString();
+
+  // Get device settings for filter calculation
+  const deviceSettings = await client.query<{
+    device_id: string;
+    use_forced_air_for_heat: boolean | null;
+    filter_target_hours: number;
+  }>(
+    `SELECT device_id, use_forced_air_for_heat, COALESCE(filter_target_hours, 100) as filter_target_hours
+     FROM devices WHERE device_key = $1`,
+    [device_key]
+  );
+
+  const device = deviceSettings.rows[0];
+  if (!device) return;
+
+  // Create completed session
+  await client.query(
+    `INSERT INTO runtime_sessions (
+      device_key, mode, equipment_status, started_at, ended_at,
+      runtime_seconds, tick_count, terminated_reason, created_at, updated_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, 1, 'posted_runtime', NOW(), NOW())`,
+    [device_key, mode, previous_status, started_at, ended_at, runtime_seconds]
+  );
+
+  // Calculate filter hours
+  const addHours = runtime_seconds / 3600.0;
+  const lastReset = state.last_reset_ts ? dayjs.utc(state.last_reset_ts) : null;
+
+  let newHours = parseFloat(String(state.hours_used_total || 0)) + addHours;
+  let filterHoursToAdd = addHours;
+
+  // Adjust if session started before last reset
+  if (lastReset && dayjs.utc(started_at).isBefore(lastReset)) {
+    const postResetDur = Math.max(0, dayjs.utc(ended_at).diff(lastReset, "second"));
+    newHours = parseFloat(String(state.hours_used_total || 0)) + postResetDur / 3600.0;
+    filterHoursToAdd = postResetDur / 3600.0;
+  }
+
+  // Apply filter logic to previous_status (what was actually running)
+  const shouldCountFilter = countsTowardFilter(previous_status, device.use_forced_air_for_heat);
+
+  if (!shouldCountFilter) {
+    filterHoursToAdd = 0;
+  }
+
+  const newFilterHours = parseFloat(String(state.filter_hours_used || 0)) + filterHoursToAdd;
+
+  // Calculate filter usage percentage
+  const filter_usage_percent = Math.min(
+    100,
+    Math.round((newFilterHours / device.filter_target_hours) * 100)
+  );
+
+  // Update device_states
+  await client.query(
+    `UPDATE device_states
+     SET hours_used_total = $1,
+         filter_hours_used = $2,
+         last_event_ts = $3,
+         updated_at = NOW()
+     WHERE device_key = $4`,
+    [newHours, newFilterHours, recorded_at, device_key]
+  );
+
+  // Update filter_usage_percent in devices table
+  await client.query(
+    `UPDATE devices
+     SET filter_usage_percent = $1, updated_at = NOW()
+     WHERE device_key = $2`,
+    [filter_usage_percent, device_key]
+  );
+
+  console.log(
+    `[sessionStitcher] Device ${device_key}: +${addHours.toFixed(2)}h total, ` +
+    `+${filterHoursToAdd.toFixed(2)}h filter (${shouldCountFilter ? previous_status : "excluded"}), ` +
+    `usage: ${filter_usage_percent}% [POSTED]`
+  );
+
+  // Update state object
+  state.hours_used_total = newHours;
+  state.filter_hours_used = newFilterHours;
+  state.last_event_ts = recorded_at;
+}
+
 async function stitchDevice(
   client: PoolClient,
   device_key: string,
@@ -192,7 +298,7 @@ async function stitchDevice(
   // Pull new events since last_event_ts
   const evs = await client.query(
     `
-    SELECT id, equipment_status, is_active, recorded_at
+    SELECT id, equipment_status, is_active, recorded_at, runtime_seconds, previous_status
     FROM equipment_events
     WHERE device_key = $1
       AND ($2::timestamptz IS NULL OR recorded_at > $2)
@@ -209,6 +315,14 @@ async function stitchDevice(
 
   for (const e of evs.rows) {
     const ts = dayjs.utc(e.recorded_at);
+
+    // PRIORITY: If event includes runtime_seconds, use posted data (more accurate)
+    if (e.runtime_seconds && e.runtime_seconds > 0 && e.previous_status) {
+      await processRuntimeEvent(client, device_key, e, state);
+      continue; // Skip to next event
+    }
+
+    // FALLBACK: Use ON/OFF transition tracking for events without runtime_seconds
     const activeNow = toBoolActive(e.equipment_status, e.is_active);
 
     if (!state.is_active && activeNow) {
