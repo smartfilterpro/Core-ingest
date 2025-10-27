@@ -124,24 +124,41 @@ GET /summaries/filter-status/:deviceKey
 
 ### Session Stitcher Worker (runs every 5 minutes)
 
-The `sessionStitcher` worker tracks equipment runtime and calculates filter usage in real-time:
+The `sessionStitcher` worker tracks equipment runtime and calculates filter usage in real-time using a **hybrid approach**:
 
-1. **Monitors Equipment Events**
-   - Tracks ON/OFF transitions from `equipment_events` table
-   - Creates runtime sessions with equipment_status
+#### Primary Method: Posted Runtime Data (Most Accurate)
 
-2. **Closes Runtime Sessions**
-   - Closes sessions after 180 seconds of inactivity
-   - Extracts `equipment_status` from session
+When Bubble posts events with `runtime_seconds` and `previous_status`:
 
-3. **Determines Filter Usage**
-   - Calls `countsTowardFilter(equipment_status, use_forced_air_for_heat)`
-   - Calculates both total hours and filter-specific hours
+```json
+{
+  "equipment_status": "OFF",
+  "previous_status": "Heating_Fan",
+  "runtime_seconds": 1800,
+  "timestamp": "2025-10-27T10:30:00Z"
+}
+```
 
-4. **Updates Database**
-   - Updates `device_states.hours_used_total`
-   - Updates `device_states.filter_hours_used`
-   - Calculates and updates `devices.filter_usage_percent`
+The worker:
+1. **Uses Posted Runtime** - Takes the device's actual runtime measurement (1800 seconds)
+2. **Uses Previous Status** - Knows what the device WAS doing ("Heating_Fan")
+3. **Creates Completed Session** - Immediately creates a finished session with accurate data
+4. **Applies Filter Logic** - Checks if `previous_status` counts toward filter usage
+5. **Updates Real-Time** - Updates all counters and percentages instantly
+
+**Benefits:**
+- ✅ Device-reported runtime (most accurate)
+- ✅ No dependency on event timing
+- ✅ Handles intermittent operation correctly
+- ✅ Immediate processing (no 180-second tail delay)
+
+#### Fallback Method: Time-Based Calculation
+
+For events without `runtime_seconds`, falls back to transition tracking:
+1. Tracks ON/OFF transitions from `equipment_events` table
+2. Creates runtime sessions with equipment_status
+3. Closes sessions after 180 seconds of inactivity
+4. Calculates duration from timestamps: `ended_at - started_at`
 
 **Calculation:**
 ```typescript
@@ -150,13 +167,35 @@ filter_usage_percent = Math.min(100, (filter_hours_used / filter_target_hours) *
 
 **Console Output:**
 ```
-[sessionStitcher] Device workspace:device123: +0.25h total, +0.25h filter (Cooling_Fan), usage: 23%
+[sessionStitcher] Device workspace:device123: +0.50h total, +0.50h filter (Heating_Fan), usage: 23% [POSTED]
 [sessionStitcher] Device workspace:device456: +0.15h total, +0.00h filter (excluded), usage: 18%
 ```
+
+Note the `[POSTED]` tag indicates runtime was from device measurement (not calculated).
 
 ## Integration with Bubble
 
 ### From Bubble → Core
+
+**Post Equipment Events with Runtime (Recommended):**
+```javascript
+// When equipment status changes and you have runtime data
+POST https://core-api.com/ingest/v1/events:batch
+{
+  "events": [{
+    "device_id": "device123",
+    "equipment_status": "OFF",              // Current state
+    "previous_status": "Heating_Fan",       // What it WAS doing
+    "runtime_seconds": 1800,                // How long it ran
+    "timestamp": "2025-10-27T10:30:00Z"
+  }]
+}
+```
+
+**Important:** Always include `previous_status` when posting `runtime_seconds`. This tells Core:
+- `previous_status`: What the equipment was doing during the runtime period
+- `runtime_seconds`: How long it ran in that previous state
+- `equipment_status`: What the equipment is doing NOW (usually "OFF")
 
 **Set Filter Target:**
 ```javascript
