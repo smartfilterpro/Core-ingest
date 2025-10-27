@@ -12,40 +12,50 @@ const mode = options?.fullHistory ? 'ALL HISTORY' : `LAST ${options?.days || 7} 
 
   console.log('📊 Starting daily summary worker...');
   const query = `
-    WITH daily AS (
+    WITH session_thermostat_modes AS (
+      -- Get the most recent thermostat_mode for each runtime session
+      SELECT DISTINCT ON (rs.session_id)
+        rs.session_id,
+        rs.device_key,
+        rs.started_at,
+        rs.runtime_seconds,
+        rs.mode as equipment_mode,
+        ee.thermostat_mode
+      FROM runtime_sessions rs
+      LEFT JOIN equipment_events ee
+        ON rs.device_key = ee.device_key
+        AND ee.thermostat_mode IS NOT NULL
+        AND ee.recorded_at <= rs.started_at
+      WHERE rs.started_at IS NOT NULL
+        ${dateFilter}
+      ORDER BY rs.session_id, ee.recorded_at DESC
+    ),
+    daily AS (
       SELECT
         d.device_id,
-        DATE(rs.started_at) AS date,
-        SUM(COALESCE(rs.runtime_seconds, 0))::INT AS runtime_seconds_total,
+        DATE(stm.started_at) AS date,
+        SUM(COALESCE(stm.runtime_seconds, 0))::INT AS runtime_seconds_total,
+        -- HVAC Mode Breakdown (what equipment is DOING)
+        SUM(CASE WHEN stm.equipment_mode = 'heat' THEN COALESCE(stm.runtime_seconds, 0) ELSE 0 END)::INT AS runtime_seconds_heat,
+        SUM(CASE WHEN stm.equipment_mode = 'cool' THEN COALESCE(stm.runtime_seconds, 0) ELSE 0 END)::INT AS runtime_seconds_cool,
+        SUM(CASE WHEN stm.equipment_mode = 'fan' THEN COALESCE(stm.runtime_seconds, 0) ELSE 0 END)::INT AS runtime_seconds_fan,
+        SUM(CASE WHEN stm.equipment_mode = 'auxheat' THEN COALESCE(stm.runtime_seconds, 0) ELSE 0 END)::INT AS runtime_seconds_auxheat,
+        SUM(CASE WHEN stm.equipment_mode NOT IN ('heat', 'cool', 'fan', 'auxheat') OR stm.equipment_mode IS NULL THEN COALESCE(stm.runtime_seconds, 0) ELSE 0 END)::INT AS runtime_seconds_unknown,
+        -- Operating Mode Distribution (what users SET thermostat to) - NOW USING thermostat_mode!
+        SUM(CASE WHEN stm.thermostat_mode IN ('heat') THEN COALESCE(stm.runtime_seconds, 0) ELSE 0 END)::INT AS runtime_seconds_mode_heat,
+        SUM(CASE WHEN stm.thermostat_mode IN ('cool') THEN COALESCE(stm.runtime_seconds, 0) ELSE 0 END)::INT AS runtime_seconds_mode_cool,
+        SUM(CASE WHEN stm.thermostat_mode IN ('auto', 'heat-cool') THEN COALESCE(stm.runtime_seconds, 0) ELSE 0 END)::INT AS runtime_seconds_mode_auto,
+        SUM(CASE WHEN stm.thermostat_mode IN ('off') THEN COALESCE(stm.runtime_seconds, 0) ELSE 0 END)::INT AS runtime_seconds_mode_off,
+        SUM(CASE WHEN stm.thermostat_mode IN ('away', 'vacation') THEN COALESCE(stm.runtime_seconds, 0) ELSE 0 END)::INT AS runtime_seconds_mode_away,
+        SUM(CASE WHEN stm.thermostat_mode IN ('eco', 'energy_saver') THEN COALESCE(stm.runtime_seconds, 0) ELSE 0 END)::INT AS runtime_seconds_mode_eco,
+        SUM(CASE WHEN stm.thermostat_mode NOT IN ('heat', 'cool', 'auto', 'heat-cool', 'off', 'away', 'vacation', 'eco', 'energy_saver') OR stm.thermostat_mode IS NULL THEN COALESCE(stm.runtime_seconds, 0) ELSE 0 END)::INT AS runtime_seconds_mode_other,
         COUNT(*) AS runtime_sessions_count,
-        AVG(COALESCE(rs.runtime_seconds, 0))::NUMERIC AS avg_runtime,
-        AVG(ev.last_temperature)::NUMERIC AS avg_temperature,
-        AVG(ev.last_humidity)::NUMERIC AS avg_humidity
-      FROM runtime_sessions rs
-      JOIN devices d ON d.device_key = rs.device_key
-      LEFT JOIN equipment_events ev
-        ON rs.device_key = ev.device_key
-        AND ev.recorded_at BETWEEN rs.started_at AND COALESCE(rs.ended_at, rs.started_at)
-      WHERE rs.started_at IS NOT NULL
-        AND d.device_id IS NOT NULL
-        ${dateFilter}
-      GROUP BY d.device_id, DATE(rs.started_at)
+        AVG(COALESCE(stm.runtime_seconds, 0))::NUMERIC AS avg_runtime
+      FROM session_thermostat_modes stm
+      JOIN devices d ON d.device_key = stm.device_key
+      WHERE d.device_id IS NOT NULL
+      GROUP BY d.device_id, DATE(stm.started_at)
     )
-    INSERT INTO summaries_daily (
-      device_id,
-      date,
-      runtime_seconds_total,
-      runtime_sessions_count,
-      avg_temperature,
-      avg_humidity,
-      updated_at
-    )
-    SELECT
-      device_id,
-      date,
-      runtime_seconds_total,
-      runtime_sessions_count,
-      avg_temperature,
       avg_humidity,
       NOW()
     FROM daily
