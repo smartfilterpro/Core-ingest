@@ -1,5 +1,5 @@
 -- Migration: Add thermostat mode setting columns to summaries_daily table
--- This enables Operating Mode Distribution (what users SET their thermostat to)
+-- This enables Operating Mode Distribution (what users SET thermostat to)
 
 -- Add thermostat mode setting runtime columns
 ALTER TABLE summaries_daily
@@ -18,4 +18,4 @@ COMMENT ON COLUMN summaries_daily.runtime_seconds_mode_auto IS 'Total runtime wh
 COMMENT ON COLUMN summaries_daily.runtime_seconds_mode_off IS 'Total runtime when thermostat was set to OFF mode (seconds)';
 COMMENT ON COLUMN summaries_daily.runtime_seconds_mode_away IS 'Total runtime when thermostat was set to AWAY/VACATION mode (seconds)';
 COMMENT ON COLUMN summaries_daily.runtime_seconds_mode_eco IS 'Total runtime when thermostat was set to ECO/ENERGY_SAVER mode (seconds)';
-COMMENT ON COLUMN summaries_daily.runtime_seconds_mode_other IS 'Total runtime when thermostat was set to other modes (fan, auxheat, em_heat, etc.) (seconds)';
+COMMENT ON COLUMN summaries_daily.runtime_seconds_mode_other IS 'Total runtime when thermostat was in other/unknown mode setting (seconds)';
