@@ -22,28 +22,19 @@ router.get('/daily', async (req: Request, res: Response) => {
     const { rows } = await pool.query(
       `
       SELECT
-  device_id,
-  date,
-  runtime_seconds_total,
-  -- HVAC Mode Breakdown (what equipment is DOING)
-  runtime_seconds_heat,
-  runtime_seconds_cool,
-  runtime_seconds_fan,
-  runtime_seconds_auxheat,
-  runtime_seconds_unknown,
-  -- Operating Mode Distribution (what users SET thermostat to)
-  runtime_seconds_mode_heat,
-  runtime_seconds_mode_cool,
-  runtime_seconds_mode_auto,
-  runtime_seconds_mode_off,
-  runtime_seconds_mode_away,
-  runtime_seconds_mode_eco,
-  runtime_seconds_mode_other,
-  runtime_sessions_count,
-  avg_temperature,
-  avg_humidity,
-  updated_at
-FROM summaries_daily
+        device_id,
+        date,
+        runtime_seconds_total,
+        runtime_seconds_heat,
+        runtime_seconds_cool,
+        runtime_seconds_fan,
+        runtime_seconds_auxheat,
+        runtime_seconds_unknown,
+        runtime_sessions_count,
+        avg_temperature,
+        avg_humidity,
+        updated_at
+      FROM summaries_daily
       WHERE device_id = $1
         ${dateFilter}
       ORDER BY date DESC
