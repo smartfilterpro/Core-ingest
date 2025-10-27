@@ -18,14 +18,16 @@ const mode = options?.fullHistory ? 'ALL HISTORY' : `LAST ${options?.days || 7} 
         rs.session_id,
         rs.device_key,
         rs.started_at,
+        rs.ended_at,
         rs.runtime_seconds,
         rs.mode as equipment_mode,
-        ee.thermostat_mode
+        ee.thermostat_mode,
+        ee.last_temperature,
+        ee.last_humidity
       FROM runtime_sessions rs
       LEFT JOIN equipment_events ee
         ON rs.device_key = ee.device_key
-        AND ee.thermostat_mode IS NOT NULL
-        AND ee.recorded_at <= rs.started_at
+        AND ee.recorded_at <= COALESCE(rs.ended_at, rs.started_at)
       WHERE rs.started_at IS NOT NULL
         ${dateFilter}
       ORDER BY rs.session_id, ee.recorded_at DESC
@@ -41,27 +43,79 @@ const mode = options?.fullHistory ? 'ALL HISTORY' : `LAST ${options?.days || 7} 
         SUM(CASE WHEN stm.equipment_mode = 'fan' THEN COALESCE(stm.runtime_seconds, 0) ELSE 0 END)::INT AS runtime_seconds_fan,
         SUM(CASE WHEN stm.equipment_mode = 'auxheat' THEN COALESCE(stm.runtime_seconds, 0) ELSE 0 END)::INT AS runtime_seconds_auxheat,
         SUM(CASE WHEN stm.equipment_mode NOT IN ('heat', 'cool', 'fan', 'auxheat') OR stm.equipment_mode IS NULL THEN COALESCE(stm.runtime_seconds, 0) ELSE 0 END)::INT AS runtime_seconds_unknown,
-        -- Operating Mode Distribution (what users SET thermostat to) - NOW USING thermostat_mode!
-        SUM(CASE WHEN stm.thermostat_mode IN ('heat') THEN COALESCE(stm.runtime_seconds, 0) ELSE 0 END)::INT AS runtime_seconds_mode_heat,
-        SUM(CASE WHEN stm.thermostat_mode IN ('cool') THEN COALESCE(stm.runtime_seconds, 0) ELSE 0 END)::INT AS runtime_seconds_mode_cool,
+        -- Operating Mode Distribution (what users SET thermostat to) - USING thermostat_mode!
+        SUM(CASE WHEN stm.thermostat_mode = 'heat' THEN COALESCE(stm.runtime_seconds, 0) ELSE 0 END)::INT AS runtime_seconds_mode_heat,
+        SUM(CASE WHEN stm.thermostat_mode = 'cool' THEN COALESCE(stm.runtime_seconds, 0) ELSE 0 END)::INT AS runtime_seconds_mode_cool,
         SUM(CASE WHEN stm.thermostat_mode IN ('auto', 'heat-cool') THEN COALESCE(stm.runtime_seconds, 0) ELSE 0 END)::INT AS runtime_seconds_mode_auto,
-        SUM(CASE WHEN stm.thermostat_mode IN ('off') THEN COALESCE(stm.runtime_seconds, 0) ELSE 0 END)::INT AS runtime_seconds_mode_off,
+        SUM(CASE WHEN stm.thermostat_mode = 'off' THEN COALESCE(stm.runtime_seconds, 0) ELSE 0 END)::INT AS runtime_seconds_mode_off,
         SUM(CASE WHEN stm.thermostat_mode IN ('away', 'vacation') THEN COALESCE(stm.runtime_seconds, 0) ELSE 0 END)::INT AS runtime_seconds_mode_away,
         SUM(CASE WHEN stm.thermostat_mode IN ('eco', 'energy_saver') THEN COALESCE(stm.runtime_seconds, 0) ELSE 0 END)::INT AS runtime_seconds_mode_eco,
-        SUM(CASE WHEN stm.thermostat_mode NOT IN ('heat', 'cool', 'auto', 'heat-cool', 'off', 'away', 'vacation', 'eco', 'energy_saver') OR stm.thermostat_mode IS NULL THEN COALESCE(stm.runtime_seconds, 0) ELSE 0 END)::INT AS runtime_seconds_mode_other,
+        SUM(CASE WHEN stm.thermostat_mode NOT IN ('heat', 'cool', 'auto', 'heat-cool', 'off', 'away', 'vacation', 'eco', 'energy_saver') AND stm.thermostat_mode IS NOT NULL THEN COALESCE(stm.runtime_seconds, 0) ELSE 0 END)::INT AS runtime_seconds_mode_other,
         COUNT(*) AS runtime_sessions_count,
-        AVG(COALESCE(stm.runtime_seconds, 0))::NUMERIC AS avg_runtime
+        AVG(stm.last_temperature)::NUMERIC AS avg_temperature,
+        AVG(stm.last_humidity)::NUMERIC AS avg_humidity
       FROM session_thermostat_modes stm
       JOIN devices d ON d.device_key = stm.device_key
       WHERE d.device_id IS NOT NULL
       GROUP BY d.device_id, DATE(stm.started_at)
     )
+    INSERT INTO summaries_daily (
+      device_id,
+      date,
+      runtime_seconds_total,
+      runtime_seconds_heat,
+      runtime_seconds_cool,
+      runtime_seconds_fan,
+      runtime_seconds_auxheat,
+      runtime_seconds_unknown,
+      runtime_seconds_mode_heat,
+      runtime_seconds_mode_cool,
+      runtime_seconds_mode_auto,
+      runtime_seconds_mode_off,
+      runtime_seconds_mode_away,
+      runtime_seconds_mode_eco,
+      runtime_seconds_mode_other,
+      runtime_sessions_count,
+      avg_temperature,
+      avg_humidity,
+      updated_at
+    )
+    SELECT
+      device_id,
+      date,
+      runtime_seconds_total,
+      runtime_seconds_heat,
+      runtime_seconds_cool,
+      runtime_seconds_fan,
+      runtime_seconds_auxheat,
+      runtime_seconds_unknown,
+      runtime_seconds_mode_heat,
+      runtime_seconds_mode_cool,
+      runtime_seconds_mode_auto,
+      runtime_seconds_mode_off,
+      runtime_seconds_mode_away,
+      runtime_seconds_mode_eco,
+      runtime_seconds_mode_other,
+      runtime_sessions_count,
+      avg_temperature,
       avg_humidity,
       NOW()
     FROM daily
     ON CONFLICT (device_id, date)
     DO UPDATE SET
       runtime_seconds_total = EXCLUDED.runtime_seconds_total,
+      runtime_seconds_heat = EXCLUDED.runtime_seconds_heat,
+      runtime_seconds_cool = EXCLUDED.runtime_seconds_cool,
+      runtime_seconds_fan = EXCLUDED.runtime_seconds_fan,
+      runtime_seconds_auxheat = EXCLUDED.runtime_seconds_auxheat,
+      runtime_seconds_unknown = EXCLUDED.runtime_seconds_unknown,
+      runtime_seconds_mode_heat = EXCLUDED.runtime_seconds_mode_heat,
+      runtime_seconds_mode_cool = EXCLUDED.runtime_seconds_mode_cool,
+      runtime_seconds_mode_auto = EXCLUDED.runtime_seconds_mode_auto,
+      runtime_seconds_mode_off = EXCLUDED.runtime_seconds_mode_off,
+      runtime_seconds_mode_away = EXCLUDED.runtime_seconds_mode_away,
+      runtime_seconds_mode_eco = EXCLUDED.runtime_seconds_mode_eco,
+      runtime_seconds_mode_other = EXCLUDED.runtime_seconds_mode_other,
       runtime_sessions_count = EXCLUDED.runtime_sessions_count,
       avg_temperature = EXCLUDED.avg_temperature,
       avg_humidity = EXCLUDED.avg_humidity,
