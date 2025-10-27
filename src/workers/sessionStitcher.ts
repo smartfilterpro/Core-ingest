@@ -27,6 +27,7 @@ type DeviceStateRow = {
   open_session_id: string | null;
   is_active: boolean;
   hours_used_total: number;
+  filter_hours_used: number;
   last_reset_ts: string | null;
 };
 
@@ -65,6 +66,45 @@ function deriveMode(
   if (src.includes("cool")) return "cool";
   if (src.includes("fan")) return "fan";
   return "unknown";
+}
+
+/**
+ * Determines if a runtime session should count toward filter usage.
+ *
+ * Rules:
+ * 1. Always count: Cooling, Cooling_Fan, Fan, Fan_only
+ * 2. If use_forced_air_for_heat = true: Count all Heating/AuxHeat
+ * 3. If use_forced_air_for_heat = false: Only count Heating_Fan, AuxHeat_Fan
+ *
+ * @param equipment_status - The equipment status (e.g., "Heating", "Heating_Fan", "Cooling", "Fan_only")
+ * @param use_forced_air_for_heat - Device setting for forced air during heating
+ * @returns true if this runtime counts toward filter usage
+ */
+function countsTowardFilter(
+  equipment_status: string | null,
+  use_forced_air_for_heat: boolean | null
+): boolean {
+  if (!equipment_status) return false;
+
+  const status = equipment_status.toLowerCase();
+
+  // Always count cooling and fan-only operations
+  if (status.includes("cool") || status.includes("fan")) {
+    return true;
+  }
+
+  // For heating and aux heat
+  if (status.includes("heat")) {
+    // If has _Fan suffix (case insensitive), always count
+    if (status.includes("_fan") || status.endsWith("fan")) {
+      return true;
+    }
+
+    // Otherwise, only count if use_forced_air_for_heat is true
+    return use_forced_air_for_heat === true;
+  }
+
+  return false;
 }
 
 export async function runSessionStitcher() {
@@ -111,31 +151,33 @@ async function ensureDeviceState(
 ): Promise<DeviceStateRow> {
   const { rows } = await client.query(
     `
-    SELECT device_key, last_event_ts, open_session_id, is_active, hours_used_total, last_reset_ts
+    SELECT device_key, last_event_ts, open_session_id, is_active,
+           hours_used_total, COALESCE(filter_hours_used, 0) as filter_hours_used, last_reset_ts
     FROM device_states WHERE device_key = $1
   `,
     [device_key]
   );
-  
+
   if (rows[0]) return rows[0];
-  
+
   await client.query(
     `
-    INSERT INTO device_states (device_key, last_event_ts, open_session_id, is_active, hours_used_total, last_reset_ts)
-    VALUES ($1, NULL, NULL, false, 0, NULL)
+    INSERT INTO device_states (device_key, last_event_ts, open_session_id, is_active, hours_used_total, filter_hours_used, last_reset_ts)
+    VALUES ($1, NULL, NULL, false, 0, 0, NULL)
     ON CONFLICT (device_key) DO NOTHING
   `,
     [device_key]
   );
-  
+
   const reread = await client.query(
     `
-    SELECT device_key, last_event_ts, open_session_id, is_active, hours_used_total, last_reset_ts
+    SELECT device_key, last_event_ts, open_session_id, is_active,
+           hours_used_total, COALESCE(filter_hours_used, 0) as filter_hours_used, last_reset_ts
     FROM device_states WHERE device_key = $1
   `,
     [device_key]
   );
-  
+
   return reread.rows[0];
 }
 
@@ -269,22 +311,25 @@ async function maybeCloseStale(
   const lastTs = dayjs.utc(state.last_event_ts);
   const cutoff = lastTs.add(tailSeconds, "second");
   const now = dayjs.utc();
-  
+
   if (now.isBefore(cutoff)) return;
 
   // Close session at last_event_ts + tailSeconds
   const ended_at = cutoff.toISOString();
 
-  // Compute duration from session start
+  // Compute duration from session start and get equipment_status
   const sess = await client.query<SessionRow>(
     `
-    SELECT session_id, started_at FROM runtime_sessions WHERE session_id = $1
+    SELECT session_id, started_at, equipment_status FROM runtime_sessions WHERE session_id = $1
   `,
     [state.open_session_id]
   );
-  
-  const started_at = sess.rows[0]?.started_at;
-  if (!started_at) return;
+
+  const sessionData = sess.rows[0];
+  if (!sessionData?.started_at) return;
+
+  const started_at = sessionData.started_at;
+  const equipment_status = sessionData.equipment_status;
 
   const dur = Math.max(
     0,
@@ -300,29 +345,87 @@ async function maybeCloseStale(
     [ended_at, dur, state.open_session_id]
   );
 
-  // Update cumulative hours_used_total for device_states
+  // Get device settings for filter calculation
+  const deviceSettings = await client.query<{
+    device_id: string;
+    use_forced_air_for_heat: boolean | null;
+    filter_target_hours: number;
+  }>(
+    `SELECT device_id, use_forced_air_for_heat, COALESCE(filter_target_hours, 100) as filter_target_hours
+     FROM devices WHERE device_key = $1`,
+    [device_key]
+  );
+
+  const device = deviceSettings.rows[0];
+  if (!device) return;
+
+  // Calculate hours to add
   const lastReset = state.last_reset_ts ? dayjs.utc(state.last_reset_ts) : null;
   const addHours = dur / 3600.0;
-  
-  // FIXED: Use parseFloat to prevent string concatenation
+
   let newHours = parseFloat(String(state.hours_used_total || 0)) + addHours;
 
+  // Adjust if session started before last reset
   if (lastReset && dayjs.utc(started_at).isBefore(lastReset)) {
     const postResetDur = Math.max(
       0,
       dayjs.utc(ended_at).diff(lastReset, "second")
     );
-    // FIXED: Use parseFloat to prevent string concatenation
     newHours = parseFloat(String(state.hours_used_total || 0)) + postResetDur / 3600.0;
   }
 
+  // Calculate filter-specific hours based on equipment_status and use_forced_air_for_heat
+  const shouldCountFilter = countsTowardFilter(
+    equipment_status,
+    device.use_forced_air_for_heat
+  );
+
+  let filterHoursToAdd = shouldCountFilter ? addHours : 0;
+
+  // Adjust filter hours if session started before last reset
+  if (lastReset && dayjs.utc(started_at).isBefore(lastReset)) {
+    const postResetDur = Math.max(
+      0,
+      dayjs.utc(ended_at).diff(lastReset, "second")
+    );
+    filterHoursToAdd = shouldCountFilter ? postResetDur / 3600.0 : 0;
+  }
+
+  const newFilterHours = parseFloat(String(state.filter_hours_used || 0)) + filterHoursToAdd;
+
+  // Calculate filter usage percentage
+  const filter_usage_percent = Math.min(
+    100,
+    Math.round((newFilterHours / device.filter_target_hours) * 100)
+  );
+
+  // Update device_states with both total and filter hours
   await client.query(
     `
     UPDATE device_states
-    SET open_session_id = NULL, hours_used_total = $1, updated_at = NOW()
+    SET open_session_id = NULL,
+        hours_used_total = $1,
+        filter_hours_used = $2,
+        updated_at = NOW()
+    WHERE device_key = $3
+  `,
+    [newHours, newFilterHours, device_key]
+  );
+
+  // Update filter_usage_percent in devices table
+  await client.query(
+    `
+    UPDATE devices
+    SET filter_usage_percent = $1, updated_at = NOW()
     WHERE device_key = $2
   `,
-    [newHours, device_key]
+    [filter_usage_percent, device_key]
+  );
+
+  console.log(
+    `[sessionStitcher] Device ${device_key}: +${addHours.toFixed(2)}h total, ` +
+    `+${filterHoursToAdd.toFixed(2)}h filter (${shouldCountFilter ? equipment_status : "excluded"}), ` +
+    `usage: ${filter_usage_percent}%`
   );
 }
 

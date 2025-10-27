@@ -135,21 +135,43 @@ ingestV2Router.post("/v2/events:batch", async (req: Request, res: Response) => {
 
 /** PATCH /v2/update-device — from Bubble or integrations */
 ingestV2Router.post("/v2/update-device", async (req, res) => {
-  const { device_key, use_forced_air_for_heat } = req.body;
+  const { device_key, use_forced_air_for_heat, filter_target_hours } = req.body;
   if (!device_key)
     return res.status(400).json({ ok: false, error: "Missing device_key" });
 
   try {
+    // Build dynamic UPDATE query based on provided fields
+    const updates: string[] = [];
+    const values: any[] = [device_key];
+    let paramIndex = 2;
+
+    if (use_forced_air_for_heat !== undefined) {
+      updates.push(`use_forced_air_for_heat = $${paramIndex}`);
+      values.push(use_forced_air_for_heat);
+      paramIndex++;
+    }
+
+    if (filter_target_hours !== undefined) {
+      updates.push(`filter_target_hours = $${paramIndex}`);
+      values.push(filter_target_hours);
+      paramIndex++;
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ ok: false, error: "No fields to update" });
+    }
+
+    updates.push("updated_at = NOW()");
+
     await pool.query(
-      `
-      UPDATE devices
-      SET use_forced_air_for_heat = $2, updated_at = NOW()
-      WHERE device_key = $1
-      `,
-      [device_key, use_forced_air_for_heat]
+      `UPDATE devices SET ${updates.join(", ")} WHERE device_key = $1`,
+      values
     );
+
     console.log(
-      `[ingestV2] Updated device ${device_key} forcedAir=${use_forced_air_for_heat}`
+      `[ingestV2] Updated device ${device_key}:`,
+      use_forced_air_for_heat !== undefined ? `forcedAir=${use_forced_air_for_heat}` : "",
+      filter_target_hours !== undefined ? `filterTarget=${filter_target_hours}h` : ""
     );
     res.json({ ok: true });
   } catch (err: any) {
