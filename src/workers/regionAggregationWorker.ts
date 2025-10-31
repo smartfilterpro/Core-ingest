@@ -18,6 +18,7 @@ export async function runRegionAggregationWorker(pool: Pool) {
         s.date,
         AVG(s.runtime_seconds_total)::NUMERIC AS avg_runtime_seconds,
         AVG(s.avg_temperature)::NUMERIC AS avg_temperature,
+        AVG(s.avg_humidity)::NUMERIC AS avg_humidity,
         COUNT(DISTINCT s.device_id) AS device_count
       FROM summaries_daily s
       JOIN devices d ON d.device_id = s.device_id
@@ -30,6 +31,7 @@ export async function runRegionAggregationWorker(pool: Pool) {
       date,
       avg_runtime_seconds,
       avg_temp,
+      avg_humidity,
       updated_at
     )
     SELECT
@@ -37,12 +39,14 @@ export async function runRegionAggregationWorker(pool: Pool) {
       r.date,
       r.avg_runtime_seconds,
       r.avg_temperature,
+      r.avg_humidity,
       NOW()
     FROM recent r
     ON CONFLICT (region_prefix, date)
     DO UPDATE SET
       avg_runtime_seconds = EXCLUDED.avg_runtime_seconds,
       avg_temp = EXCLUDED.avg_temp,
+      avg_humidity = EXCLUDED.avg_humidity,
       updated_at = NOW()
     RETURNING *;
   `;
@@ -61,6 +65,7 @@ export async function runRegionAggregationWorker(pool: Pool) {
             date: row.date,
             avg_runtime_seconds: row.avg_runtime_seconds,
             avg_temp: row.avg_temp,
+            avg_humidity: row.avg_humidity,
             device_count: row.device_count,
           });
           console.log(`📤 Synced region ${row.region_prefix} for ${row.date}`);
