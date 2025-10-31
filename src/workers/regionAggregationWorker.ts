@@ -32,6 +32,7 @@ export async function runRegionAggregationWorker(pool: Pool) {
       avg_runtime_seconds,
       avg_temp,
       avg_humidity,
+      sample_size,
       updated_at
     )
     SELECT
@@ -40,6 +41,7 @@ export async function runRegionAggregationWorker(pool: Pool) {
       r.avg_runtime_seconds,
       r.avg_temperature,
       r.avg_humidity,
+      r.device_count,
       NOW()
     FROM recent r
     ON CONFLICT (region_prefix, date)
@@ -47,6 +49,7 @@ export async function runRegionAggregationWorker(pool: Pool) {
       avg_runtime_seconds = EXCLUDED.avg_runtime_seconds,
       avg_temp = EXCLUDED.avg_temp,
       avg_humidity = EXCLUDED.avg_humidity,
+      sample_size = EXCLUDED.sample_size,
       updated_at = NOW()
     RETURNING *;
   `;
@@ -66,7 +69,7 @@ export async function runRegionAggregationWorker(pool: Pool) {
             avg_runtime_seconds: row.avg_runtime_seconds,
             avg_temp: row.avg_temp,
             avg_humidity: row.avg_humidity,
-            device_count: row.device_count,
+            sample_size: row.sample_size,
           });
           console.log(`📤 Synced region ${row.region_prefix} for ${row.date}`);
           syncedCount++;
