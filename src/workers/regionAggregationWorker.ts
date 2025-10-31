@@ -51,6 +51,7 @@ export async function runRegionAggregationWorker(pool: Pool) {
     const { rows } = await pool.query(query);
     console.log(`✅ Region Aggregation Worker: ${rows.length} regional averages created/updated.`);
 
+    let syncedCount = 0;
     if (BUBBLE_API_URL && rows.length > 0) {
       console.log(`🌐 Syncing ${rows.length} region averages to Bubble...`);
       for (const row of rows) {
@@ -63,6 +64,7 @@ export async function runRegionAggregationWorker(pool: Pool) {
             device_count: row.device_count,
           });
           console.log(`📤 Synced region ${row.zip_prefix} for ${row.date}`);
+          syncedCount++;
         } catch (err: any) {
           console.error(`❌ Bubble sync failed for ${row.zip_prefix}: ${err.message}`);
         }
@@ -72,7 +74,20 @@ export async function runRegionAggregationWorker(pool: Pool) {
     }
 
     console.log('🌎 Region Aggregation Worker done.');
+
+    return {
+      ok: true,
+      success: true,
+      regions_updated: rows.length,
+      synced_to_bubble: syncedCount,
+      lookback_days: REGION_AGG_LOOKBACK_DAYS
+    };
   } catch (err: any) {
     console.error('[RegionAggregationWorker] Error:', err.message);
+    return {
+      ok: false,
+      success: false,
+      error: err.message
+    };
   }
 }
