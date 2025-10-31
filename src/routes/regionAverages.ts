@@ -19,6 +19,7 @@ router.get('/', async (req: Request, res: Response) => {
         avg_runtime_seconds / 3600.0 as avg_runtime_hours,
         avg_temp,
         avg_humidity,
+        sample_size,
         updated_at
       FROM region_averages
       WHERE 1=1
@@ -75,6 +76,7 @@ router.get('/:regionPrefix', async (req: Request, res: Response) => {
         avg_runtime_seconds / 3600.0 as avg_runtime_hours,
         avg_temp,
         avg_humidity,
+        sample_size,
         updated_at
       FROM region_averages
       WHERE region_prefix = $1
@@ -124,6 +126,8 @@ router.get('/:regionPrefix/summary', async (req: Request, res: Response) => {
         AVG(avg_runtime_seconds) / 3600.0 as overall_avg_runtime_hours,
         AVG(avg_temp) as overall_avg_temp,
         AVG(avg_humidity) as overall_avg_humidity,
+        AVG(sample_size) as avg_sample_size,
+        SUM(sample_size) as total_device_days,
         MAX(updated_at) as last_updated
       FROM region_averages
       WHERE region_prefix = $1
