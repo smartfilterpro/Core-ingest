@@ -26,7 +26,7 @@ export async function runRegionAggregationWorker(pool: Pool) {
       GROUP BY d.zip_prefix, s.date
     )
     INSERT INTO region_averages (
-      zip_prefix,
+      region_prefix,
       date,
       avg_runtime_seconds,
       avg_temp,
@@ -39,7 +39,7 @@ export async function runRegionAggregationWorker(pool: Pool) {
       r.avg_temperature,
       NOW()
     FROM recent r
-    ON CONFLICT (zip_prefix, date)
+    ON CONFLICT (region_prefix, date)
     DO UPDATE SET
       avg_runtime_seconds = EXCLUDED.avg_runtime_seconds,
       avg_temp = EXCLUDED.avg_temp,
@@ -57,16 +57,16 @@ export async function runRegionAggregationWorker(pool: Pool) {
       for (const row of rows) {
         try {
           await axios.post(BUBBLE_API_URL, {
-            zip_prefix: row.zip_prefix,
+            region_prefix: row.region_prefix,
             date: row.date,
             avg_runtime_seconds: row.avg_runtime_seconds,
             avg_temp: row.avg_temp,
             device_count: row.device_count,
           });
-          console.log(`📤 Synced region ${row.zip_prefix} for ${row.date}`);
+          console.log(`📤 Synced region ${row.region_prefix} for ${row.date}`);
           syncedCount++;
         } catch (err: any) {
-          console.error(`❌ Bubble sync failed for ${row.zip_prefix}: ${err.message}`);
+          console.error(`❌ Bubble sync failed for ${row.region_prefix}: ${err.message}`);
         }
       }
     } else if (!BUBBLE_API_URL) {

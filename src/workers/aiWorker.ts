@@ -30,10 +30,10 @@ export async function runAIWorker(pool: Pool) {
       GROUP BY d.device_id, d.zip_prefix, lr.last_reset
     ),
     regional_avg AS (
-      SELECT zip_prefix, AVG(avg_runtime_seconds) AS avg_runtime
+      SELECT region_prefix, AVG(avg_runtime_seconds) AS avg_runtime
       FROM region_averages
       WHERE date >= CURRENT_DATE - INTERVAL '30 days'
-      GROUP BY zip_prefix
+      GROUP BY region_prefix
     )
     SELECT
       dr.device_id,
@@ -42,7 +42,7 @@ export async function runAIWorker(pool: Pool) {
       dr.runtime_since_reset,
       ra.avg_runtime
     FROM device_runtime dr
-    LEFT JOIN regional_avg ra ON ra.zip_prefix = dr.zip_prefix;
+    LEFT JOIN regional_avg ra ON ra.region_prefix = dr.zip_prefix;
   `;
 
   const { rows } = await pool.query(query);
