@@ -88,6 +88,31 @@ app.get("/workers/backfill-summaries", async (_req, res) => {
     res.status(500).json({ ok: false, error: err.message });
   }
 });
+
+/* ------------------- Run Summary Worker with Custom Days ------------------ */
+app.get("/workers/run-summary", async (req, res) => {
+  const days = req.query.days ? parseInt(req.query.days as string) : 7;
+  const fullHistory = req.query.all === 'true';
+
+  const mode = fullHistory ? 'ALL HISTORY' : `LAST ${days} DAYS`;
+  console.log(`[workers] Running summary worker (${mode})...`);
+
+  try {
+    const result = await runSummaryWorker(pool, {
+      fullHistory,
+      days: fullHistory ? undefined : days
+    });
+
+    res.status(200).json({
+      ok: true,
+      message: `Summary worker completed (${mode})`,
+      result
+    });
+  } catch (err: any) {
+    console.error("[workers] Error running summary worker:", err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
 /* ----------------------- Diagnostic: Check Mode Data ---------------------- */
 app.get("/diagnostic/mode-data/:deviceId", async (req, res) => {
   const { deviceId } = req.params;
