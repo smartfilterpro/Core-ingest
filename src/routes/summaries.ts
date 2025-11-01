@@ -182,4 +182,225 @@ router.get('/filter-status/:deviceKey', async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * GET /summaries/validate
+ * Validate summary data completeness and identify date gaps
+ */
+router.get('/validate', async (req: Request, res: Response) => {
+  try {
+    const { device_id, days = 30 } = req.query;
+    const daysNum = parseInt(days as string);
+
+    // Query 1: Get all dates that SHOULD have summaries (based on runtime_sessions)
+    const sourceDatesQuery = device_id
+      ? `
+        SELECT DISTINCT DATE(started_at) as date, device_key
+        FROM runtime_sessions
+        WHERE device_key = (SELECT device_key FROM devices WHERE device_id = $1)
+          AND started_at >= CURRENT_DATE - INTERVAL '${daysNum} days'
+        ORDER BY date DESC
+      `
+      : `
+        SELECT DISTINCT DATE(started_at) as date, device_key
+        FROM runtime_sessions
+        WHERE started_at >= CURRENT_DATE - INTERVAL '${daysNum} days'
+        ORDER BY date DESC
+      `;
+
+    // Query 2: Get all dates that HAVE summaries
+    const summaryDatesQuery = device_id
+      ? `
+        SELECT date, device_id
+        FROM summaries_daily
+        WHERE device_id = $1
+          AND date >= CURRENT_DATE - INTERVAL '${daysNum} days'
+        ORDER BY date DESC
+      `
+      : `
+        SELECT date, device_id
+        FROM summaries_daily
+        WHERE date >= CURRENT_DATE - INTERVAL '${daysNum} days'
+        ORDER BY date DESC
+      `;
+
+    // Query 3: Find date gaps (dates with source data but no summary)
+    const gapsQuery = device_id
+      ? `
+        WITH source_dates AS (
+          SELECT DISTINCT DATE(started_at) as date, device_key
+          FROM runtime_sessions
+          WHERE device_key = (SELECT device_key FROM devices WHERE device_id = $1)
+            AND started_at >= CURRENT_DATE - INTERVAL '${daysNum} days'
+        ),
+        summary_dates AS (
+          SELECT date, device_id
+          FROM summaries_daily
+          WHERE device_id = $1
+            AND date >= CURRENT_DATE - INTERVAL '${daysNum} days'
+        )
+        SELECT
+          sd.date,
+          sd.device_key,
+          d.device_id,
+          d.device_name,
+          COUNT(*) as source_sessions
+        FROM source_dates sd
+        LEFT JOIN summary_dates sum ON sum.date = sd.date
+        LEFT JOIN devices d ON d.device_key = sd.device_key
+        WHERE sum.date IS NULL
+        GROUP BY sd.date, sd.device_key, d.device_id, d.device_name
+        ORDER BY sd.date DESC
+      `
+      : `
+        WITH source_dates AS (
+          SELECT DISTINCT DATE(started_at) as date, device_key
+          FROM runtime_sessions
+          WHERE started_at >= CURRENT_DATE - INTERVAL '${daysNum} days'
+        ),
+        summary_dates AS (
+          SELECT date, device_id
+          FROM summaries_daily
+          WHERE date >= CURRENT_DATE - INTERVAL '${daysNum} days'
+        )
+        SELECT
+          sd.date,
+          sd.device_key,
+          d.device_id,
+          d.device_name,
+          COUNT(*) as missing_count
+        FROM source_dates sd
+        LEFT JOIN summary_dates sum ON sum.date = sd.date AND sum.device_id = d.device_id
+        LEFT JOIN devices d ON d.device_key = sd.device_key
+        WHERE sum.date IS NULL
+        GROUP BY sd.date, sd.device_key, d.device_id, d.device_name
+        ORDER BY sd.date DESC
+        LIMIT 100
+      `;
+
+    // Query 4: Get summary statistics
+    const statsQuery = device_id
+      ? `
+        SELECT
+          COUNT(DISTINCT date) as total_summary_days,
+          MIN(date) as earliest_summary,
+          MAX(date) as latest_summary,
+          MAX(updated_at) as last_updated
+        FROM summaries_daily
+        WHERE device_id = $1
+          AND date >= CURRENT_DATE - INTERVAL '${daysNum} days'
+      `
+      : `
+        SELECT
+          COUNT(*) as total_summaries,
+          COUNT(DISTINCT date) as total_summary_days,
+          COUNT(DISTINCT device_id) as devices_with_summaries,
+          MIN(date) as earliest_summary,
+          MAX(date) as latest_summary,
+          MAX(updated_at) as last_updated
+        FROM summaries_daily
+        WHERE date >= CURRENT_DATE - INTERVAL '${daysNum} days'
+      `;
+
+    const params = device_id ? [device_id] : [];
+
+    const [sourceDates, summaryDates, gaps, stats] = await Promise.all([
+      pool.query(sourceDatesQuery, params),
+      pool.query(summaryDatesQuery, params),
+      pool.query(gapsQuery, params),
+      pool.query(statsQuery, params),
+    ]);
+
+    // Calculate expected date range
+    const today = new Date();
+    const startDate = new Date(today);
+    startDate.setDate(startDate.getDate() - daysNum);
+
+    // Generate list of all dates in range for comparison
+    const allDates = [];
+    for (let d = new Date(startDate); d <= today; d.setDate(d.getDate() + 1)) {
+      allDates.push(new Date(d).toISOString().split('T')[0]);
+    }
+
+    // Find completely missing dates (no source data at all)
+    const sourceDateSet = new Set(sourceDates.rows.map(r => r.date?.toISOString().split('T')[0]));
+    const summaryDateSet = new Set(summaryDates.rows.map(r => r.date?.toISOString().split('T')[0]));
+
+    const missingSourceDates = allDates.filter(d => !sourceDateSet.has(d));
+    const missingSummaryDates = allDates.filter(d => !summaryDateSet.has(d));
+
+    res.json({
+      ok: true,
+      validation: {
+        period: {
+          days: daysNum,
+          start_date: allDates[0],
+          end_date: allDates[allDates.length - 1],
+          total_expected_dates: allDates.length,
+        },
+        statistics: stats.rows[0],
+        health: {
+          source_data_dates: sourceDates.rows.length,
+          summary_dates: summaryDates.rows.length,
+          date_gaps_count: gaps.rows.length,
+          coverage_percent: sourceDates.rows.length > 0
+            ? Math.round((summaryDates.rows.length / sourceDates.rows.length) * 100)
+            : 0,
+        },
+        date_gaps: gaps.rows.map(row => ({
+          date: row.date,
+          device_id: row.device_id,
+          device_name: row.device_name,
+          device_key: row.device_key,
+        })),
+        missing_source_dates: missingSourceDates.slice(0, 20), // Limit to first 20
+        missing_summary_dates: missingSummaryDates.slice(0, 20), // Limit to first 20
+      },
+    });
+  } catch (err: any) {
+    console.error('[summaries/validate/GET] Error:', err.message);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/**
+ * GET /summaries/dates-present
+ * Get a simple list of dates that have summary data (useful for debugging)
+ */
+router.get('/dates-present', async (req: Request, res: Response) => {
+  try {
+    const { device_id, days = 30 } = req.query;
+
+    const query = device_id
+      ? `
+        SELECT DISTINCT date
+        FROM summaries_daily
+        WHERE device_id = $1
+          AND date >= CURRENT_DATE - INTERVAL '${parseInt(days as string)} days'
+        ORDER BY date DESC
+      `
+      : `
+        SELECT DISTINCT date, COUNT(*) as device_count
+        FROM summaries_daily
+        WHERE date >= CURRENT_DATE - INTERVAL '${parseInt(days as string)} days'
+        GROUP BY date
+        ORDER BY date DESC
+      `;
+
+    const params = device_id ? [device_id] : [];
+    const { rows } = await pool.query(query, params);
+
+    res.json({
+      ok: true,
+      count: rows.length,
+      dates: rows.map(r => ({
+        date: r.date,
+        ...(r.device_count && { device_count: parseInt(r.device_count) })
+      })),
+    });
+  } catch (err: any) {
+    console.error('[summaries/dates-present/GET] Error:', err.message);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 export default router;
