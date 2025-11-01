@@ -15,15 +15,20 @@ const mode = options?.fullHistory ? 'ALL HISTORY' : `LAST ${options?.days || 7} 
     WITH thermostat_mode_periods AS (
       -- Calculate duration for each thermostat_mode setting
       -- Duration = time until next mode change (or current time if no next change)
+      -- Filter out invalid sensor readings (e.g., -500)
       SELECT
         device_key,
         thermostat_mode,
         recorded_at as period_start,
         LEAD(recorded_at) OVER (PARTITION BY device_key ORDER BY recorded_at) as period_end,
-        last_temperature,
+        CASE
+          WHEN last_temperature::NUMERIC < -100 OR last_temperature::NUMERIC > 200 THEN NULL
+          ELSE last_temperature
+        END as last_temperature,
         last_humidity
       FROM equipment_events
-      WHERE thermostat_mode IS NOT NULL
+      WHERE (last_temperature IS NULL
+             OR (last_temperature::NUMERIC > -100 AND last_temperature::NUMERIC < 200))
         ${dateFilter ? dateFilter.replace('rs.started_at', 'recorded_at') : ''}
     ),
     thermostat_mode_daily AS (
@@ -45,6 +50,23 @@ const mode = options?.fullHistory ? 'ALL HISTORY' : `LAST ${options?.days || 7} 
       FROM thermostat_mode_periods
       GROUP BY device_key, DATE(period_start), thermostat_mode
     ),
+    all_event_dates AS (
+      -- Capture ALL dates with equipment events (even idle days)
+      -- Filter out invalid temperatures for averaging
+      SELECT DISTINCT
+        device_key,
+        DATE(recorded_at) as date,
+        AVG(CASE
+          WHEN last_temperature::NUMERIC > -100 AND last_temperature::NUMERIC < 200
+          THEN last_temperature::NUMERIC
+          ELSE NULL
+        END) as avg_temperature,
+        AVG(last_humidity::NUMERIC) as avg_humidity
+      FROM equipment_events
+      WHERE 1=1
+        ${dateFilter ? dateFilter.replace('rs.started_at', 'recorded_at') : ''}
+      GROUP BY device_key, DATE(recorded_at)
+    ),
     equipment_runtime_daily AS (
       -- Keep existing HVAC equipment runtime calculation
       SELECT
@@ -65,7 +87,7 @@ const mode = options?.fullHistory ? 'ALL HISTORY' : `LAST ${options?.days || 7} 
     daily AS (
       SELECT
         d.device_id,
-        COALESCE(erd.date, tmd.date) as date,
+        aed.date as date,
         -- HVAC Mode Breakdown (what equipment was DOING - from runtime_sessions)
         COALESCE(erd.runtime_seconds_total, 0)::INT as runtime_seconds_total,
         COALESCE(erd.runtime_seconds_heat, 0)::INT as runtime_seconds_heat,
@@ -82,16 +104,17 @@ const mode = options?.fullHistory ? 'ALL HISTORY' : `LAST ${options?.days || 7} 
         SUM(CASE WHEN tmd.thermostat_mode IN ('eco', 'energy_saver') THEN COALESCE(tmd.mode_duration_seconds, 0) ELSE 0 END)::INT as runtime_seconds_mode_eco,
         SUM(CASE WHEN tmd.thermostat_mode NOT IN ('heat', 'cool', 'auto', 'heat-cool', 'off', 'away', 'vacation', 'eco', 'energy_saver') AND tmd.thermostat_mode IS NOT NULL THEN COALESCE(tmd.mode_duration_seconds, 0) ELSE 0 END)::INT as runtime_seconds_mode_other,
         COALESCE(erd.runtime_sessions_count, 0)::INT as runtime_sessions_count,
-        AVG(COALESCE(tmd.avg_temperature, 0))::NUMERIC as avg_temperature,
-        AVG(COALESCE(tmd.avg_humidity, 0))::NUMERIC as avg_humidity
+        -- Use all_event_dates for temperature/humidity (already filtered for valid temps)
+        aed.avg_temperature::NUMERIC as avg_temperature,
+        aed.avg_humidity::NUMERIC as avg_humidity
       FROM devices d
-      LEFT JOIN equipment_runtime_daily erd ON erd.device_key = d.device_key
-      LEFT JOIN thermostat_mode_daily tmd ON tmd.device_key = d.device_key AND tmd.date = erd.date
+      INNER JOIN all_event_dates aed ON aed.device_key = d.device_key
+      LEFT JOIN equipment_runtime_daily erd ON erd.device_key = d.device_key AND erd.date = aed.date
+      LEFT JOIN thermostat_mode_daily tmd ON tmd.device_key = d.device_key AND tmd.date = aed.date
       WHERE d.device_id IS NOT NULL
-        AND (erd.date IS NOT NULL OR tmd.date IS NOT NULL)
-      GROUP BY d.device_id, COALESCE(erd.date, tmd.date), erd.runtime_seconds_total, erd.runtime_seconds_heat,
+      GROUP BY d.device_id, aed.date, erd.runtime_seconds_total, erd.runtime_seconds_heat,
                erd.runtime_seconds_cool, erd.runtime_seconds_fan, erd.runtime_seconds_auxheat,
-               erd.runtime_seconds_unknown, erd.runtime_sessions_count
+               erd.runtime_seconds_unknown, erd.runtime_sessions_count, aed.avg_temperature, aed.avg_humidity
     )
     INSERT INTO summaries_daily (
       device_id,
