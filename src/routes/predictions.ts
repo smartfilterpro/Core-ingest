@@ -8,7 +8,7 @@ const router = express.Router();
  * GET /predictions/:device_id/latest
  * Get the most recent AI prediction for a device's filter delivery
  *
- * Returns the latest prediction from the predictions table (populated by AI service)
+ * Returns the latest prediction from the ai_predictions table (populated by AI service)
  * Does NOT proxy to AI service - queries database directly
  */
 router.get('/:device_id/latest', async (req: Request, res: Response) => {
@@ -31,7 +31,7 @@ router.get('/:device_id/latest', async (req: Request, res: Response) => {
         filter_age_days,
         total_runtime_hours,
         created_at
-      FROM predictions
+      FROM ai_predictions
       WHERE device_id = $1
       ORDER BY created_at DESC
       LIMIT 1
