@@ -47,22 +47,128 @@ router.get('/', async (req: Request, res: Response) => {
 router.get('/:deviceKey', async (req: Request, res: Response) => {
   try {
     const { deviceKey } = req.params;
-    
+
     const { rows } = await pool.query(
       'SELECT * FROM devices WHERE device_key = $1',
       [deviceKey]
     );
-    
+
     if (rows.length === 0) {
       return res.status(404).json({ ok: false, error: 'Device not found' });
     }
-    
+
     res.json({
       ok: true,
       device: rows[0],
     });
   } catch (err: any) {
     console.error('[devices/GET/:id] Error:', err.message);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/**
+ * PATCH /devices/:device_id
+ * Update device configuration from Bubble
+ *
+ * Accepts device_id (can be device_key or device_id field)
+ * Updates: zip_prefix, filter_target_hours, use_forced_air_for_heat, zip_code_prefix, timezone
+ */
+router.patch('/:device_id', async (req: Request, res: Response) => {
+  try {
+    const { device_id } = req.params;
+    const {
+      zip_prefix,
+      filter_target_hours,
+      use_forced_air_for_heat,
+      zip_code_prefix,
+      timezone,
+    } = req.body;
+
+    // Validate at least one field is provided
+    if (
+      zip_prefix === undefined &&
+      filter_target_hours === undefined &&
+      use_forced_air_for_heat === undefined &&
+      zip_code_prefix === undefined &&
+      timezone === undefined
+    ) {
+      return res.status(400).json({
+        ok: false,
+        error: 'At least one field must be provided: zip_prefix, filter_target_hours, use_forced_air_for_heat, zip_code_prefix, timezone'
+      });
+    }
+
+    // Build dynamic UPDATE query for only provided fields
+    const updates: string[] = [];
+    const values: any[] = [];
+    let paramIndex = 1;
+
+    if (zip_prefix !== undefined) {
+      updates.push(`zip_prefix = $${paramIndex++}`);
+      values.push(zip_prefix);
+    }
+
+    if (filter_target_hours !== undefined) {
+      updates.push(`filter_target_hours = $${paramIndex++}`);
+      values.push(filter_target_hours);
+    }
+
+    if (use_forced_air_for_heat !== undefined) {
+      updates.push(`use_forced_air_for_heat = $${paramIndex++}`);
+      values.push(use_forced_air_for_heat);
+    }
+
+    if (zip_code_prefix !== undefined) {
+      updates.push(`zip_code_prefix = $${paramIndex++}`);
+      values.push(zip_code_prefix);
+    }
+
+    if (timezone !== undefined) {
+      updates.push(`timezone = $${paramIndex++}`);
+      values.push(timezone);
+    }
+
+    // Always update updated_at
+    updates.push(`updated_at = NOW()`);
+
+    // Add device_id as last parameter
+    values.push(device_id);
+
+    const query = `
+      UPDATE devices
+      SET ${updates.join(', ')}
+      WHERE device_key = $${paramIndex} OR device_id = $${paramIndex}
+      RETURNING
+        device_id,
+        device_key,
+        device_name,
+        zip_prefix,
+        zip_code_prefix,
+        filter_target_hours,
+        use_forced_air_for_heat,
+        timezone,
+        updated_at
+    `;
+
+    const { rows } = await pool.query(query, values);
+
+    if (rows.length === 0) {
+      return res.status(404).json({
+        ok: false,
+        error: 'Device not found'
+      });
+    }
+
+    console.log(`[devices/PATCH] Updated device ${device_id}:`, req.body);
+
+    res.json({
+      ok: true,
+      device: rows[0],
+      updated_fields: Object.keys(req.body),
+    });
+  } catch (err: any) {
+    console.error('[devices/PATCH] Error:', err.message);
     res.status(500).json({ ok: false, error: err.message });
   }
 });
