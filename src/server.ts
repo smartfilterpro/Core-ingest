@@ -21,6 +21,7 @@ import summariesRouter from "./routes/summaries";
 import equipmentEventsRouter from "./routes/equipmentEvents";
 import regionAveragesRouter from "./routes/regionAverages";
 import predictionsRouter from "./routes/predictions";
+import runtimeReportRouter from "./routes/runtimeReport";
 
 // Workers + utilities
 import { runSessionStitcher, runSummaryWorker, runRegionAggregationWorker, bubbleSummarySync, heartbeatWorker } from "./workers/index";
@@ -55,6 +56,7 @@ app.use("/summaries", summariesRouter);
 app.use("/equipment-events", equipmentEventsRouter);
 app.use("/region-averages", regionAveragesRouter);
 app.use("/predictions", predictionsRouter);
+app.use("/ingest/v1/runtime-report", runtimeReportRouter);
 
 /* ---------------------------- Worker Trigger --------------------------- */
 app.get("/workers/run-all", async (_req, res) => {
