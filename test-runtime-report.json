@@ -1,0 +1,51 @@
+{
+  "device_key": "test_device_123",
+  "report_date": "2024-11-02",
+  "intervals": [
+    {
+      "interval_timestamp": "2024-11-02T00:00:00Z",
+      "aux_heat1_seconds": 0,
+      "aux_heat2_seconds": 0,
+      "aux_heat3_seconds": 0,
+      "comp_cool1_seconds": 180,
+      "comp_cool2_seconds": 0,
+      "comp_heat1_seconds": 0,
+      "comp_heat2_seconds": 0,
+      "fan_seconds": 180,
+      "outdoor_temp_f": 45.2,
+      "zone_avg_temp_f": 72.1,
+      "zone_humidity": 45,
+      "hvac_mode": "cool"
+    },
+    {
+      "interval_timestamp": "2024-11-02T00:05:00Z",
+      "aux_heat1_seconds": 0,
+      "aux_heat2_seconds": 0,
+      "aux_heat3_seconds": 0,
+      "comp_cool1_seconds": 300,
+      "comp_cool2_seconds": 0,
+      "comp_heat1_seconds": 0,
+      "comp_heat2_seconds": 0,
+      "fan_seconds": 300,
+      "outdoor_temp_f": 45.3,
+      "zone_avg_temp_f": 71.8,
+      "zone_humidity": 46,
+      "hvac_mode": "cool"
+    },
+    {
+      "interval_timestamp": "2024-11-02T00:10:00Z",
+      "aux_heat1_seconds": 0,
+      "aux_heat2_seconds": 0,
+      "aux_heat3_seconds": 0,
+      "comp_cool1_seconds": 240,
+      "comp_cool2_seconds": 0,
+      "comp_heat1_seconds": 0,
+      "comp_heat2_seconds": 0,
+      "fan_seconds": 240,
+      "outdoor_temp_f": 45.1,
+      "zone_avg_temp_f": 72.0,
+      "zone_humidity": 45,
+      "hvac_mode": "cool"
+    }
+  ]
+}
