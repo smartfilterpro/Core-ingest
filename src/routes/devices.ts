@@ -72,7 +72,7 @@ router.get('/:deviceKey', async (req: Request, res: Response) => {
  * Update device configuration from Bubble
  *
  * Accepts device_id (can be device_key or device_id field)
- * Updates: zip_prefix, filter_target_hours, use_forced_air_for_heat, zip_code_prefix, timezone
+ * Updates: zip_prefix, filter_target_hours, use_forced_air_for_heat, zip_code_prefix, timezone, user_id
  */
 router.patch('/:device_id', async (req: Request, res: Response) => {
   try {
@@ -83,6 +83,7 @@ router.patch('/:device_id', async (req: Request, res: Response) => {
       use_forced_air_for_heat,
       zip_code_prefix,
       timezone,
+      user_id,
     } = req.body;
 
     // Validate at least one field is provided
@@ -91,11 +92,12 @@ router.patch('/:device_id', async (req: Request, res: Response) => {
       filter_target_hours === undefined &&
       use_forced_air_for_heat === undefined &&
       zip_code_prefix === undefined &&
-      timezone === undefined
+      timezone === undefined &&
+      user_id === undefined
     ) {
       return res.status(400).json({
         ok: false,
-        error: 'At least one field must be provided: zip_prefix, filter_target_hours, use_forced_air_for_heat, zip_code_prefix, timezone'
+        error: 'At least one field must be provided: zip_prefix, filter_target_hours, use_forced_air_for_heat, zip_code_prefix, timezone, user_id'
       });
     }
 
@@ -129,6 +131,11 @@ router.patch('/:device_id', async (req: Request, res: Response) => {
       values.push(timezone);
     }
 
+    if (user_id !== undefined) {
+      updates.push(`user_id = $${paramIndex++}`);
+      values.push(user_id);
+    }
+
     // Always update updated_at
     updates.push(`updated_at = NOW()`);
 
@@ -148,6 +155,7 @@ router.patch('/:device_id', async (req: Request, res: Response) => {
         filter_target_hours,
         use_forced_air_for_heat,
         timezone,
+        user_id,
         updated_at
     `;
 
