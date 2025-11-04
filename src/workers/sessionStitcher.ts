@@ -463,10 +463,46 @@ async function maybeCloseStale(
   const started_at = sessionData.started_at;
   const equipment_status = sessionData.equipment_status;
 
-  const dur = Math.max(
+  const calculatedDur = Math.max(
     0,
     dayjs.utc(ended_at).diff(dayjs.utc(started_at), "second")
   );
+
+  // CRITICAL FIX: Reject sessions with unrealistic durations
+  // Maximum realistic session: 2 hours (7200 seconds)
+  // If polling stopped for a long time, don't create phantom runtime
+  const MAX_REASONABLE_SESSION_SECONDS = 7200;  // 2 hours
+
+  if (calculatedDur > MAX_REASONABLE_SESSION_SECONDS) {
+    console.warn(
+      `[sessionStitcher] REJECTED phantom session for ${device_key}: ` +
+      `Duration would be ${Math.round(calculatedDur / 3600)}h ` +
+      `(${calculatedDur}s). This indicates a polling gap. ` +
+      `Deleting open session without adding runtime.`
+    );
+
+    // Delete the bogus session instead of closing it with phantom runtime
+    await client.query(
+      `DELETE FROM runtime_sessions WHERE session_id = $1`,
+      [state.open_session_id]
+    );
+
+    // Clear open session from state
+    await client.query(
+      `UPDATE device_states
+       SET open_session_id = NULL, is_active = false, updated_at = NOW()
+       WHERE device_key = $1`,
+      [device_key]
+    );
+
+    // Update local state
+    state.open_session_id = null;
+    state.is_active = false;
+
+    return; // Don't add any runtime hours
+  }
+
+  const dur = calculatedDur;
 
   await client.query(
     `
