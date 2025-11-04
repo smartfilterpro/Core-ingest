@@ -122,6 +122,24 @@ export async function runSessionStitcher() {
       devicesProcessed++;
     }
 
+    // Recalculate filter_usage_percent for all devices
+    // This ensures devices stay in sync even without new events
+    const recalcResult = await client.query(`
+      UPDATE devices d
+      SET filter_usage_percent = LEAST(
+        100,
+        ROUND((ds.filter_hours_used / NULLIF(d.filter_target_hours, 0)) * 100)
+      ),
+      updated_at = NOW()
+      FROM device_states ds
+      WHERE d.device_key = ds.device_key
+        AND d.filter_target_hours > 0
+    `);
+
+    console.log(
+      `[sessionStitcher] Recalculated filter_usage_percent for ${recalcResult.rowCount} devices`
+    );
+
     await client.query("COMMIT");
     console.log(
       `[sessionStitcher] [OK] Completed (${devicesProcessed} devices processed)`
