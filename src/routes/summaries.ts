@@ -65,34 +65,107 @@ router.get('/daily', async (req: Request, res: Response) => {
 /**
  * GET /summaries/device/:deviceId
  * Get aggregated summary for a device
+ * Returns BOTH summaries_daily (historical) AND device_states (real-time) data
  */
 router.get('/device/:deviceId', async (req: Request, res: Response) => {
   try {
     const { deviceId } = req.params;
-    
-    const { rows } = await pool.query(
+
+    // Get summaries_daily aggregation (historical, may be incomplete)
+    const summaryResult = await pool.query(
       `
-      SELECT 
+      SELECT
         device_id,
         SUM(runtime_seconds_total) as total_runtime_seconds,
         SUM(runtime_sessions_count) as total_sessions,
         AVG(avg_temperature) as avg_temperature,
         AVG(avg_humidity) as avg_humidity,
-        COUNT(*) as days_recorded
+        COUNT(*) as days_recorded,
+        MIN(date) as earliest_date,
+        MAX(date) as latest_date
       FROM summaries_daily
       WHERE device_id = $1
       GROUP BY device_id
       `,
       [deviceId]
     );
-    
-    if (rows.length === 0) {
-      return res.status(404).json({ ok: false, error: 'No summary data found' });
+
+    // Get device_states (real-time, authoritative)
+    const deviceStateResult = await pool.query(
+      `
+      SELECT
+        d.device_id,
+        d.device_key,
+        d.device_name,
+        d.filter_target_hours,
+        d.filter_usage_percent,
+        d.use_forced_air_for_heat,
+        ds.hours_used_total,
+        ds.filter_hours_used,
+        ds.last_reset_ts,
+        ds.last_event_ts,
+        ds.is_active,
+        EXTRACT(EPOCH FROM (NOW() - ds.last_reset_ts))/86400 as days_since_reset,
+        CASE
+          WHEN ds.filter_hours_used > 0 AND d.filter_target_hours > 0
+          THEN d.filter_target_hours - COALESCE(ds.filter_hours_used, 0)
+          ELSE d.filter_target_hours
+        END as hours_remaining
+      FROM devices d
+      LEFT JOIN device_states ds ON ds.device_key = d.device_key
+      WHERE d.device_id = $1
+      `,
+      [deviceId]
+    );
+
+    if (deviceStateResult.rows.length === 0) {
+      return res.status(404).json({ ok: false, error: 'Device not found' });
     }
-    
+
+    const deviceData = deviceStateResult.rows[0];
+    const summaryData = summaryResult.rows[0] || {
+      device_id: deviceId,
+      total_runtime_seconds: 0,
+      total_sessions: 0,
+      avg_temperature: null,
+      avg_humidity: null,
+      days_recorded: 0,
+      earliest_date: null,
+      latest_date: null,
+    };
+
     res.json({
       ok: true,
-      summary: rows[0],
+      device_id: deviceId,
+      device_key: deviceData.device_key,
+      device_name: deviceData.device_name,
+
+      // RECOMMENDED: Use this for frontend display (real-time, complete)
+      real_time: {
+        total_runtime_hours: parseFloat(deviceData.hours_used_total) || 0,
+        filter_runtime_hours: parseFloat(deviceData.filter_hours_used) || 0,
+        filter_usage_percent: parseFloat(deviceData.filter_usage_percent) || 0,
+        filter_target_hours: parseFloat(deviceData.filter_target_hours) || 100,
+        hours_remaining: parseFloat(deviceData.hours_remaining) || 0,
+        days_since_reset: deviceData.days_since_reset ? Math.floor(parseFloat(deviceData.days_since_reset)) : null,
+        last_event_ts: deviceData.last_event_ts,
+        is_active: deviceData.is_active,
+        use_forced_air_for_heat: deviceData.use_forced_air_for_heat,
+      },
+
+      // Historical aggregation from summaries_daily (may be incomplete if not all dates processed)
+      summaries: {
+        total_runtime_hours: summaryData.total_runtime_seconds ? parseFloat(summaryData.total_runtime_seconds) / 3600 : 0,
+        total_sessions: parseInt(summaryData.total_sessions) || 0,
+        avg_temperature: summaryData.avg_temperature ? parseFloat(summaryData.avg_temperature) : null,
+        avg_humidity: summaryData.avg_humidity ? parseFloat(summaryData.avg_humidity) : null,
+        days_recorded: parseInt(summaryData.days_recorded) || 0,
+        earliest_date: summaryData.earliest_date,
+        latest_date: summaryData.latest_date,
+      },
+
+      // Legacy format for backward compatibility (use summaries_daily)
+      summary: summaryData,
     });
   } catch (err: any) {
     console.error('[summaries/device/GET] Error:', err.message);
