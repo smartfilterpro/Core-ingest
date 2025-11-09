@@ -22,13 +22,17 @@ const mode = options?.fullHistory ? 'ALL HISTORY' : `LAST ${options?.days || 7} 
         recorded_at as period_start,
         LEAD(recorded_at) OVER (PARTITION BY device_key ORDER BY recorded_at) as period_end,
         CASE
-          WHEN last_temperature::NUMERIC < -100 OR last_temperature::NUMERIC > 200 THEN NULL
+          WHEN last_temperature::NUMERIC <= 0 OR last_temperature::NUMERIC < -100 OR last_temperature::NUMERIC > 200 THEN NULL
           ELSE last_temperature
         END as last_temperature,
-        last_humidity
+        CASE
+          WHEN last_humidity::NUMERIC <= 0 THEN NULL
+          ELSE last_humidity
+        END as last_humidity
       FROM equipment_events
       WHERE (last_temperature IS NULL
-             OR (last_temperature::NUMERIC > -100 AND last_temperature::NUMERIC < 200))
+             OR (last_temperature::NUMERIC > 0 AND last_temperature::NUMERIC > -100 AND last_temperature::NUMERIC < 200))
+        AND (last_humidity IS NULL OR last_humidity::NUMERIC > 0)
         ${dateFilter ? dateFilter.replace('rs.started_at', 'recorded_at') : ''}
     ),
     thermostat_mode_daily AS (
@@ -57,11 +61,15 @@ const mode = options?.fullHistory ? 'ALL HISTORY' : `LAST ${options?.days || 7} 
         device_key,
         DATE(recorded_at) as date,
         AVG(CASE
-          WHEN last_temperature::NUMERIC > -100 AND last_temperature::NUMERIC < 200
+          WHEN last_temperature::NUMERIC > 0 AND last_temperature::NUMERIC > -100 AND last_temperature::NUMERIC < 200
           THEN last_temperature::NUMERIC
           ELSE NULL
         END) as avg_temperature,
-        AVG(last_humidity::NUMERIC) as avg_humidity
+        AVG(CASE
+          WHEN last_humidity::NUMERIC > 0
+          THEN last_humidity::NUMERIC
+          ELSE NULL
+        END) as avg_humidity
       FROM equipment_events
       WHERE 1=1
         ${dateFilter ? dateFilter.replace('rs.started_at', 'recorded_at') : ''}
