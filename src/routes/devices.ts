@@ -231,11 +231,11 @@ router.delete('/:deviceId', requireAuth, async (req: Request, res: Response) => 
           if (err2.code === '42703') {
             console.log('[deleteDevice] filter_resets.device_key also does not exist, skipping');
           } else {
-            throw err2;
+            console.warn('[deleteDevice] Error deleting filter_resets with device_key (continuing anyway):', err2.message);
           }
         }
       } else {
-        throw err;
+        console.warn('[deleteDevice] Error deleting filter_resets (continuing anyway):', err.message);
       }
     }
 
@@ -298,11 +298,11 @@ router.delete('/:deviceId', requireAuth, async (req: Request, res: Response) => 
           if (err2.code === '42703') {
             console.log('[deleteDevice] device_status.device_key also does not exist, skipping');
           } else {
-            throw err2;
+            console.warn('[deleteDevice] Error deleting device_status with device_key (continuing anyway):', err2.message);
           }
         }
       } else {
-        throw err;
+        console.warn('[deleteDevice] Error deleting device_status (continuing anyway):', err.message);
       }
     }
 
