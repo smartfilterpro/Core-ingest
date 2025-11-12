@@ -181,4 +181,39 @@ router.patch('/:device_id', async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * DELETE /devices/:deviceId
+ * Deletes a specific device and all associated data (runtime sessions, filtered data, etc.)
+ */
+router.delete('/:deviceId', async (req: Request, res: Response) => {
+  const { deviceId } = req.params;
+
+  if (!deviceId) {
+    return res.status(400).json({ ok: false, error: 'Missing deviceId' });
+  }
+
+  try {
+    const result = await pool.query(
+      'DELETE FROM devices WHERE device_id = $1 OR device_key = $1 RETURNING device_id, device_key, device_name',
+      [deviceId]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ ok: false, error: 'Device not found' });
+    }
+
+    const deletedDevice = result.rows[0];
+    console.log(`[deleteDevice] Deleted device ${deletedDevice.device_id} (${deletedDevice.device_key}) and all linked data.`);
+
+    return res.status(200).json({
+      ok: true,
+      message: `Device ${deletedDevice.device_name || deletedDevice.device_key} deleted successfully.`,
+      device: deletedDevice
+    });
+  } catch (err: any) {
+    console.error('[deleteDevice] ERROR:', err.message);
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 export default router;
