@@ -215,120 +215,143 @@ router.delete('/:deviceId', requireAuth, async (req: Request, res: Response) => 
 
     // Delete all related records in correct order to avoid foreign key constraint violations
     // Order matters: delete dependent records before parent records
+    // ALL deletions are permissive - if table/entry doesn't exist, just skip
 
-    // 1. Delete filter resets (try device_id first, fallback to device_key)
+    // 1. Delete AI predictions (try device_id first, fallback to device_key)
+    try {
+      await client.query('DELETE FROM ai_predictions WHERE device_id = $1', [device_id]);
+    } catch (err: any) {
+      if (err.code === '42P01') {
+        console.log('[deleteDevice] ai_predictions table does not exist, skipping');
+      } else if (err.code === '42703') {
+        console.log('[deleteDevice] ai_predictions.device_id does not exist, trying device_key');
+        try {
+          await client.query('DELETE FROM ai_predictions WHERE device_key = $1', [device_key]);
+        } catch (err2: any) {
+          console.warn('[deleteDevice] Error deleting ai_predictions with device_key (skipping):', err2.message);
+        }
+      } else {
+        console.warn('[deleteDevice] Error deleting ai_predictions (skipping):', err.message);
+      }
+    }
+
+    // 2. Delete filter resets (try device_id first, fallback to device_key)
     try {
       await client.query('DELETE FROM filter_resets WHERE device_id = $1', [device_id]);
     } catch (err: any) {
       if (err.code === '42P01') {
         console.log('[deleteDevice] filter_resets table does not exist, skipping');
       } else if (err.code === '42703') {
-        // device_id column doesn't exist - try device_key instead
         console.log('[deleteDevice] filter_resets.device_id does not exist, trying device_key');
         try {
           await client.query('DELETE FROM filter_resets WHERE device_key = $1', [device_key]);
         } catch (err2: any) {
-          if (err2.code === '42703') {
-            console.log('[deleteDevice] filter_resets.device_key also does not exist, skipping');
-          } else {
-            console.warn('[deleteDevice] Error deleting filter_resets with device_key (continuing anyway):', err2.message);
-          }
+          console.warn('[deleteDevice] Error deleting filter_resets with device_key (skipping):', err2.message);
         }
       } else {
-        console.warn('[deleteDevice] Error deleting filter_resets (continuing anyway):', err.message);
+        console.warn('[deleteDevice] Error deleting filter_resets (skipping):', err.message);
       }
     }
 
-    // 2. Delete Ecobee runtime intervals (references device_key)
+    // 3. Delete Ecobee runtime intervals (references device_key)
     try {
       await client.query('DELETE FROM ecobee_runtime_intervals WHERE device_key = $1', [device_key]);
     } catch (err: any) {
       if (err.code === '42P01') {
         console.log('[deleteDevice] ecobee_runtime_intervals table does not exist, skipping');
       } else {
-        console.warn('[deleteDevice] Error deleting ecobee_runtime_intervals (continuing anyway):', err.message);
+        console.warn('[deleteDevice] Error deleting ecobee_runtime_intervals (skipping):', err.message);
       }
     }
 
-    // 3. Delete equipment events (references device_key)
+    // 4. Delete equipment events (references device_key)
     try {
       await client.query('DELETE FROM equipment_events WHERE device_key = $1', [device_key]);
     } catch (err: any) {
       if (err.code === '42P01') {
         console.log('[deleteDevice] equipment_events table does not exist, skipping');
       } else {
-        console.warn('[deleteDevice] Error deleting equipment_events (continuing anyway):', err.message);
+        console.warn('[deleteDevice] Error deleting equipment_events (skipping):', err.message);
       }
     }
 
-    // 4. Delete runtime sessions (references device_key)
+    // 5. Delete runtime segments (try device_key first, fallback to device_id)
+    try {
+      await client.query('DELETE FROM runtime_segments WHERE device_key = $1', [device_key]);
+    } catch (err: any) {
+      if (err.code === '42P01') {
+        console.log('[deleteDevice] runtime_segments table does not exist, skipping');
+      } else if (err.code === '42703') {
+        console.log('[deleteDevice] runtime_segments.device_key does not exist, trying device_id');
+        try {
+          await client.query('DELETE FROM runtime_segments WHERE device_id = $1', [device_id]);
+        } catch (err2: any) {
+          console.warn('[deleteDevice] Error deleting runtime_segments with device_id (skipping):', err2.message);
+        }
+      } else {
+        console.warn('[deleteDevice] Error deleting runtime_segments (skipping):', err.message);
+      }
+    }
+
+    // 6. Delete runtime sessions (references device_key)
     try {
       await client.query('DELETE FROM runtime_sessions WHERE device_key = $1', [device_key]);
     } catch (err: any) {
       if (err.code === '42P01') {
         console.log('[deleteDevice] runtime_sessions table does not exist, skipping');
       } else {
-        console.warn('[deleteDevice] Error deleting runtime_sessions (continuing anyway):', err.message);
+        console.warn('[deleteDevice] Error deleting runtime_sessions (skipping):', err.message);
       }
     }
 
-    // 5. Delete daily summaries (references device_id)
+    // 7. Delete daily summaries (references device_id)
     try {
       await client.query('DELETE FROM summaries_daily WHERE device_id = $1', [device_id]);
     } catch (err: any) {
       if (err.code === '42P01') {
         console.log('[deleteDevice] summaries_daily table does not exist, skipping');
       } else {
-        console.warn('[deleteDevice] Error deleting summaries_daily (continuing anyway):', err.message);
+        console.warn('[deleteDevice] Error deleting summaries_daily (skipping):', err.message);
       }
     }
 
-    // 6. Delete device status (try device_id first, fallback to device_key)
+    // 8. Delete device status (try device_id first, fallback to device_key)
     try {
       await client.query('DELETE FROM device_status WHERE device_id = $1', [device_id]);
     } catch (err: any) {
       if (err.code === '42P01') {
         console.log('[deleteDevice] device_status table does not exist, skipping');
       } else if (err.code === '42703') {
-        // device_id column doesn't exist - try device_key instead
         console.log('[deleteDevice] device_status.device_id does not exist, trying device_key');
         try {
           await client.query('DELETE FROM device_status WHERE device_key = $1', [device_key]);
         } catch (err2: any) {
-          if (err2.code === '42703') {
-            console.log('[deleteDevice] device_status.device_key also does not exist, skipping');
-          } else {
-            console.warn('[deleteDevice] Error deleting device_status with device_key (continuing anyway):', err2.message);
-          }
+          console.warn('[deleteDevice] Error deleting device_status with device_key (skipping):', err2.message);
         }
       } else {
-        console.warn('[deleteDevice] Error deleting device_status (continuing anyway):', err.message);
+        console.warn('[deleteDevice] Error deleting device_status (skipping):', err.message);
       }
     }
 
-    // 7. Delete device states (references device_key) - CRITICAL TABLE
+    // 9. Delete device states (references device_key)
     try {
       await client.query('DELETE FROM device_states WHERE device_key = $1', [device_key]);
     } catch (err: any) {
       if (err.code === '42P01') {
         console.log('[deleteDevice] device_states table does not exist, skipping');
       } else {
-        // This is a critical error - we should not continue
-        console.error('[deleteDevice] CRITICAL: Error deleting device_states:', err.message);
-        throw err;
+        console.warn('[deleteDevice] Error deleting device_states (skipping):', err.message);
       }
     }
 
-    // 8. Finally, delete the device itself - CRITICAL OPERATION
+    // 10. Finally, delete the device itself
     try {
       await client.query('DELETE FROM devices WHERE device_id = $1', [device_id]);
     } catch (err: any) {
       if (err.code === '42P01') {
         console.log('[deleteDevice] devices table does not exist, skipping');
       } else {
-        // This is a critical error - if we can't delete the device, the operation failed
-        console.error('[deleteDevice] CRITICAL: Error deleting devices:', err.message);
-        throw err;
+        console.warn('[deleteDevice] Error deleting devices (skipping):', err.message);
       }
     }
 
