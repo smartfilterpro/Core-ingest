@@ -71,10 +71,10 @@ router.delete('/:userId', requireAuth, async (req: Request, res: Response) => {
       [deviceIds]
     );
 
-    // 6. Delete device status (references device_key)
+    // 6. Delete device status (references device_id)
     const statusResult = await client.query(
-      'DELETE FROM device_status WHERE device_key = ANY($1::varchar[])',
-      [deviceKeys]
+      'DELETE FROM device_status WHERE device_id = ANY($1::int[])',
+      [deviceIds]
     );
 
     // 7. Delete device states (references device_key)

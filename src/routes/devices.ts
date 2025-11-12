@@ -231,8 +231,8 @@ router.delete('/:deviceId', requireAuth, async (req: Request, res: Response) => 
     // 5. Delete daily summaries (references device_id)
     await client.query('DELETE FROM summaries_daily WHERE device_id = $1', [device_id]);
 
-    // 6. Delete device status (references device_key)
-    await client.query('DELETE FROM device_status WHERE device_key = $1', [device_key]);
+    // 6. Delete device status (references device_id)
+    await client.query('DELETE FROM device_status WHERE device_id = $1', [device_id]);
 
     // 7. Delete device states (references device_key)
     await client.query('DELETE FROM device_states WHERE device_key = $1', [device_key]);
