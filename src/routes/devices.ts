@@ -246,7 +246,7 @@ router.delete('/:deviceId', requireAuth, async (req: Request, res: Response) => 
       if (err.code === '42P01') {
         console.log('[deleteDevice] ecobee_runtime_intervals table does not exist, skipping');
       } else {
-        throw err;
+        console.warn('[deleteDevice] Error deleting ecobee_runtime_intervals (continuing anyway):', err.message);
       }
     }
 
@@ -257,7 +257,7 @@ router.delete('/:deviceId', requireAuth, async (req: Request, res: Response) => 
       if (err.code === '42P01') {
         console.log('[deleteDevice] equipment_events table does not exist, skipping');
       } else {
-        throw err;
+        console.warn('[deleteDevice] Error deleting equipment_events (continuing anyway):', err.message);
       }
     }
 
@@ -268,7 +268,7 @@ router.delete('/:deviceId', requireAuth, async (req: Request, res: Response) => 
       if (err.code === '42P01') {
         console.log('[deleteDevice] runtime_sessions table does not exist, skipping');
       } else {
-        throw err;
+        console.warn('[deleteDevice] Error deleting runtime_sessions (continuing anyway):', err.message);
       }
     }
 
@@ -279,7 +279,7 @@ router.delete('/:deviceId', requireAuth, async (req: Request, res: Response) => 
       if (err.code === '42P01') {
         console.log('[deleteDevice] summaries_daily table does not exist, skipping');
       } else {
-        throw err;
+        console.warn('[deleteDevice] Error deleting summaries_daily (continuing anyway):', err.message);
       }
     }
 
@@ -313,7 +313,7 @@ router.delete('/:deviceId', requireAuth, async (req: Request, res: Response) => 
       if (err.code === '42P01') {
         console.log('[deleteDevice] device_states table does not exist, skipping');
       } else {
-        throw err;
+        console.warn('[deleteDevice] Error deleting device_states (continuing anyway):', err.message);
       }
     }
 
@@ -324,7 +324,7 @@ router.delete('/:deviceId', requireAuth, async (req: Request, res: Response) => 
       if (err.code === '42P01') {
         console.log('[deleteDevice] devices table does not exist, skipping');
       } else {
-        throw err;
+        console.warn('[deleteDevice] Error deleting devices (continuing anyway):', err.message);
       }
     }
 
