@@ -240,16 +240,48 @@ router.delete('/:deviceId', requireAuth, async (req: Request, res: Response) => 
     }
 
     // 2. Delete Ecobee runtime intervals (references device_key)
-    await client.query('DELETE FROM ecobee_runtime_intervals WHERE device_key = $1', [device_key]);
+    try {
+      await client.query('DELETE FROM ecobee_runtime_intervals WHERE device_key = $1', [device_key]);
+    } catch (err: any) {
+      if (err.code === '42P01') {
+        console.log('[deleteDevice] ecobee_runtime_intervals table does not exist, skipping');
+      } else {
+        throw err;
+      }
+    }
 
     // 3. Delete equipment events (references device_key)
-    await client.query('DELETE FROM equipment_events WHERE device_key = $1', [device_key]);
+    try {
+      await client.query('DELETE FROM equipment_events WHERE device_key = $1', [device_key]);
+    } catch (err: any) {
+      if (err.code === '42P01') {
+        console.log('[deleteDevice] equipment_events table does not exist, skipping');
+      } else {
+        throw err;
+      }
+    }
 
     // 4. Delete runtime sessions (references device_key)
-    await client.query('DELETE FROM runtime_sessions WHERE device_key = $1', [device_key]);
+    try {
+      await client.query('DELETE FROM runtime_sessions WHERE device_key = $1', [device_key]);
+    } catch (err: any) {
+      if (err.code === '42P01') {
+        console.log('[deleteDevice] runtime_sessions table does not exist, skipping');
+      } else {
+        throw err;
+      }
+    }
 
     // 5. Delete daily summaries (references device_id)
-    await client.query('DELETE FROM summaries_daily WHERE device_id = $1', [device_id]);
+    try {
+      await client.query('DELETE FROM summaries_daily WHERE device_id = $1', [device_id]);
+    } catch (err: any) {
+      if (err.code === '42P01') {
+        console.log('[deleteDevice] summaries_daily table does not exist, skipping');
+      } else {
+        throw err;
+      }
+    }
 
     // 6. Delete device status (try device_id first, fallback to device_key)
     try {
@@ -275,10 +307,26 @@ router.delete('/:deviceId', requireAuth, async (req: Request, res: Response) => 
     }
 
     // 7. Delete device states (references device_key)
-    await client.query('DELETE FROM device_states WHERE device_key = $1', [device_key]);
+    try {
+      await client.query('DELETE FROM device_states WHERE device_key = $1', [device_key]);
+    } catch (err: any) {
+      if (err.code === '42P01') {
+        console.log('[deleteDevice] device_states table does not exist, skipping');
+      } else {
+        throw err;
+      }
+    }
 
     // 8. Finally, delete the device itself
-    await client.query('DELETE FROM devices WHERE device_id = $1', [device_id]);
+    try {
+      await client.query('DELETE FROM devices WHERE device_id = $1', [device_id]);
+    } catch (err: any) {
+      if (err.code === '42P01') {
+        console.log('[deleteDevice] devices table does not exist, skipping');
+      } else {
+        throw err;
+      }
+    }
 
     await client.query('COMMIT');
 
