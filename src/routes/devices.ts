@@ -216,14 +216,24 @@ router.delete('/:deviceId', requireAuth, async (req: Request, res: Response) => 
     // Delete all related records in correct order to avoid foreign key constraint violations
     // Order matters: delete dependent records before parent records
 
-    // 1. Delete filter resets (references device_id)
-    // Note: This table might not exist if migration wasn't run
+    // 1. Delete filter resets (try device_id first, fallback to device_key)
     try {
       await client.query('DELETE FROM filter_resets WHERE device_id = $1', [device_id]);
     } catch (err: any) {
-      if (err.code === '42P01' || err.code === '42703') {
-        // Table or column doesn't exist - skip it
-        console.log('[deleteDevice] filter_resets table/column does not exist, skipping');
+      if (err.code === '42P01') {
+        console.log('[deleteDevice] filter_resets table does not exist, skipping');
+      } else if (err.code === '42703') {
+        // device_id column doesn't exist - try device_key instead
+        console.log('[deleteDevice] filter_resets.device_id does not exist, trying device_key');
+        try {
+          await client.query('DELETE FROM filter_resets WHERE device_key = $1', [device_key]);
+        } catch (err2: any) {
+          if (err2.code === '42703') {
+            console.log('[deleteDevice] filter_resets.device_key also does not exist, skipping');
+          } else {
+            throw err2;
+          }
+        }
       } else {
         throw err;
       }
@@ -241,12 +251,24 @@ router.delete('/:deviceId', requireAuth, async (req: Request, res: Response) => 
     // 5. Delete daily summaries (references device_id)
     await client.query('DELETE FROM summaries_daily WHERE device_id = $1', [device_id]);
 
-    // 6. Delete device status (references device_id)
+    // 6. Delete device status (try device_id first, fallback to device_key)
     try {
       await client.query('DELETE FROM device_status WHERE device_id = $1', [device_id]);
     } catch (err: any) {
-      if (err.code === '42P01' || err.code === '42703') {
-        console.log('[deleteDevice] device_status table/column does not exist, skipping');
+      if (err.code === '42P01') {
+        console.log('[deleteDevice] device_status table does not exist, skipping');
+      } else if (err.code === '42703') {
+        // device_id column doesn't exist - try device_key instead
+        console.log('[deleteDevice] device_status.device_id does not exist, trying device_key');
+        try {
+          await client.query('DELETE FROM device_status WHERE device_key = $1', [device_key]);
+        } catch (err2: any) {
+          if (err2.code === '42703') {
+            console.log('[deleteDevice] device_status.device_key also does not exist, skipping');
+          } else {
+            throw err2;
+          }
+        }
       } else {
         throw err;
       }

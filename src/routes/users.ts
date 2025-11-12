@@ -41,8 +41,7 @@ router.delete('/:userId', requireAuth, async (req: Request, res: Response) => {
     // Delete all related records for all devices belonging to this user
     // Order matters: delete dependent records before parent records
 
-    // 1. Delete filter resets (references device_id)
-    // Note: This table might not exist if migration wasn't run
+    // 1. Delete filter resets (try device_id first, fallback to device_key)
     let filterResetsResult;
     try {
       filterResetsResult = await client.query(
@@ -55,9 +54,21 @@ router.delete('/:userId', requireAuth, async (req: Request, res: Response) => {
         console.log('[deleteUser] filter_resets table does not exist, skipping');
         filterResetsResult = { rowCount: 0 };
       } else if (err.code === '42703') {
-        // Column doesn't exist - skip it
-        console.log('[deleteUser] filter_resets.device_id column does not exist, skipping');
-        filterResetsResult = { rowCount: 0 };
+        // device_id column doesn't exist - try device_key instead
+        console.log('[deleteUser] filter_resets.device_id does not exist, trying device_key');
+        try {
+          filterResetsResult = await client.query(
+            'DELETE FROM filter_resets WHERE device_key = ANY($1)',
+            [deviceKeys]
+          );
+        } catch (err2: any) {
+          if (err2.code === '42703') {
+            console.log('[deleteUser] filter_resets.device_key also does not exist, skipping');
+            filterResetsResult = { rowCount: 0 };
+          } else {
+            throw err2;
+          }
+        }
       } else {
         console.error('[deleteUser] Error deleting filter_resets:', err.message);
         throw new Error(`Failed to delete filter_resets: ${err.message}`);
@@ -112,7 +123,7 @@ router.delete('/:userId', requireAuth, async (req: Request, res: Response) => {
       throw new Error(`Failed to delete summaries_daily: ${err.message}`);
     }
 
-    // 6. Delete device status (references device_id)
+    // 6. Delete device status (try device_id first, fallback to device_key)
     let statusResult;
     try {
       statusResult = await client.query(
@@ -124,8 +135,21 @@ router.delete('/:userId', requireAuth, async (req: Request, res: Response) => {
         console.log('[deleteUser] device_status table does not exist, skipping');
         statusResult = { rowCount: 0 };
       } else if (err.code === '42703') {
-        console.log('[deleteUser] device_status.device_id column does not exist, skipping');
-        statusResult = { rowCount: 0 };
+        // device_id column doesn't exist - try device_key instead
+        console.log('[deleteUser] device_status.device_id does not exist, trying device_key');
+        try {
+          statusResult = await client.query(
+            'DELETE FROM device_status WHERE device_key = ANY($1)',
+            [deviceKeys]
+          );
+        } catch (err2: any) {
+          if (err2.code === '42703') {
+            console.log('[deleteUser] device_status.device_key also does not exist, skipping');
+            statusResult = { rowCount: 0 };
+          } else {
+            throw err2;
+          }
+        }
       } else {
         console.error('[deleteUser] Error deleting device_status:', err.message);
         throw new Error(`Failed to delete device_status: ${err.message}`);
