@@ -197,8 +197,6 @@ router.delete('/:deviceId', requireAuth, async (req: Request, res: Response) => 
   const client = await pool.connect();
 
   try {
-    await client.query('BEGIN');
-
     // First, get the device to verify it exists and get device_key
     const deviceResult = await client.query(
       'SELECT device_id, device_key, device_name FROM devices WHERE device_id = $1 OR device_key = $1',
@@ -206,16 +204,17 @@ router.delete('/:deviceId', requireAuth, async (req: Request, res: Response) => 
     );
 
     if (deviceResult.rowCount === 0) {
-      await client.query('ROLLBACK');
       return res.status(404).json({ ok: false, error: 'Device not found' });
     }
 
     const device = deviceResult.rows[0];
     const { device_id, device_key, device_name } = device;
 
-    // Delete all related records in correct order to avoid foreign key constraint violations
-    // Order matters: delete dependent records before parent records
-    // ALL deletions are permissive - if table/entry doesn't exist, just skip
+    console.log(`[deleteDevice] Found device ${device_id} (${device_key})`);
+
+    // Delete all related records for this device
+    // NO TRANSACTION - Each deletion is independent to allow permissive error handling
+    // If one table fails, others can still succeed
 
     // 1. Delete AI predictions (try device_id first, fallback to device_key)
     try {
@@ -345,17 +344,17 @@ router.delete('/:deviceId', requireAuth, async (req: Request, res: Response) => 
     }
 
     // 10. Finally, delete the device itself
+    let deleteDeviceResult;
     try {
-      await client.query('DELETE FROM devices WHERE device_id = $1', [device_id]);
+      deleteDeviceResult = await client.query('DELETE FROM devices WHERE device_id = $1', [device_id]);
     } catch (err: any) {
       if (err.code === '42P01') {
         console.log('[deleteDevice] devices table does not exist, skipping');
       } else {
         console.warn('[deleteDevice] Error deleting devices (skipping):', err.message);
       }
+      deleteDeviceResult = { rowCount: 0 };
     }
-
-    await client.query('COMMIT');
 
     console.log(`[deleteDevice] Deleted device ${device_id} (${device_key}) and all linked data.`);
 
@@ -369,7 +368,6 @@ router.delete('/:deviceId', requireAuth, async (req: Request, res: Response) => 
       }
     });
   } catch (err: any) {
-    await client.query('ROLLBACK');
     console.error('[deleteDevice] ERROR:', err.message);
     return res.status(500).json({ ok: false, error: err.message });
   } finally {
