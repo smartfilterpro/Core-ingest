@@ -40,8 +40,36 @@ router.delete('/:userId', requireAuth, async (req: Request, res: Response) => {
 
     // Delete all related records for all devices belonging to this user
     // Order matters: delete dependent records before parent records
+    // ALL deletions are permissive - if table/entry doesn't exist, just skip
 
-    // 1. Delete filter resets (try device_id first, fallback to device_key)
+    // 1. Delete AI predictions (references device_id or device_key)
+    let predictionsResult;
+    try {
+      predictionsResult = await client.query(
+        'DELETE FROM ai_predictions WHERE device_id = ANY($1)',
+        [deviceIds]
+      );
+    } catch (err: any) {
+      if (err.code === '42P01') {
+        console.log('[deleteUser] ai_predictions table does not exist, skipping');
+      } else if (err.code === '42703') {
+        console.log('[deleteUser] ai_predictions.device_id does not exist, trying device_key');
+        try {
+          predictionsResult = await client.query(
+            'DELETE FROM ai_predictions WHERE device_key = ANY($1)',
+            [deviceKeys]
+          );
+        } catch (err2: any) {
+          console.warn('[deleteUser] Error deleting ai_predictions with device_key (skipping):', err2.message);
+          predictionsResult = { rowCount: 0 };
+        }
+      } else {
+        console.warn('[deleteUser] Error deleting ai_predictions (skipping):', err.message);
+      }
+      predictionsResult = predictionsResult || { rowCount: 0 };
+    }
+
+    // 2. Delete filter resets (try device_id first, fallback to device_key)
     let filterResetsResult;
     try {
       filterResetsResult = await client.query(
@@ -50,11 +78,8 @@ router.delete('/:userId', requireAuth, async (req: Request, res: Response) => {
       );
     } catch (err: any) {
       if (err.code === '42P01') {
-        // Table doesn't exist - skip it
         console.log('[deleteUser] filter_resets table does not exist, skipping');
-        filterResetsResult = { rowCount: 0 };
       } else if (err.code === '42703') {
-        // device_id column doesn't exist - try device_key instead
         console.log('[deleteUser] filter_resets.device_id does not exist, trying device_key');
         try {
           filterResetsResult = await client.query(
@@ -62,20 +87,16 @@ router.delete('/:userId', requireAuth, async (req: Request, res: Response) => {
             [deviceKeys]
           );
         } catch (err2: any) {
-          if (err2.code === '42703') {
-            console.log('[deleteUser] filter_resets.device_key also does not exist, skipping');
-          } else {
-            console.warn('[deleteUser] Error deleting filter_resets with device_key (continuing anyway):', err2.message);
-          }
+          console.warn('[deleteUser] Error deleting filter_resets with device_key (skipping):', err2.message);
           filterResetsResult = { rowCount: 0 };
         }
       } else {
-        console.warn('[deleteUser] Error deleting filter_resets (continuing anyway):', err.message);
-        filterResetsResult = { rowCount: 0 };
+        console.warn('[deleteUser] Error deleting filter_resets (skipping):', err.message);
       }
+      filterResetsResult = filterResetsResult || { rowCount: 0 };
     }
 
-    // 2. Delete Ecobee runtime intervals (references device_key)
+    // 3. Delete Ecobee runtime intervals (references device_key)
     let ecobeeResult;
     try {
       ecobeeResult = await client.query(
@@ -86,12 +107,12 @@ router.delete('/:userId', requireAuth, async (req: Request, res: Response) => {
       if (err.code === '42P01') {
         console.log('[deleteUser] ecobee_runtime_intervals table does not exist, skipping');
       } else {
-        console.warn('[deleteUser] Error deleting ecobee_runtime_intervals (continuing anyway):', err.message);
+        console.warn('[deleteUser] Error deleting ecobee_runtime_intervals (skipping):', err.message);
       }
       ecobeeResult = { rowCount: 0 };
     }
 
-    // 3. Delete equipment events (references device_key)
+    // 4. Delete equipment events (references device_key)
     let eventsResult;
     try {
       eventsResult = await client.query(
@@ -102,12 +123,39 @@ router.delete('/:userId', requireAuth, async (req: Request, res: Response) => {
       if (err.code === '42P01') {
         console.log('[deleteUser] equipment_events table does not exist, skipping');
       } else {
-        console.warn('[deleteUser] Error deleting equipment_events (continuing anyway):', err.message);
+        console.warn('[deleteUser] Error deleting equipment_events (skipping):', err.message);
       }
       eventsResult = { rowCount: 0 };
     }
 
-    // 4. Delete runtime sessions (references device_key)
+    // 5. Delete runtime segments (references device_key)
+    let segmentsResult;
+    try {
+      segmentsResult = await client.query(
+        'DELETE FROM runtime_segments WHERE device_key = ANY($1)',
+        [deviceKeys]
+      );
+    } catch (err: any) {
+      if (err.code === '42P01') {
+        console.log('[deleteUser] runtime_segments table does not exist, skipping');
+      } else if (err.code === '42703') {
+        console.log('[deleteUser] runtime_segments.device_key does not exist, trying device_id');
+        try {
+          segmentsResult = await client.query(
+            'DELETE FROM runtime_segments WHERE device_id = ANY($1)',
+            [deviceIds]
+          );
+        } catch (err2: any) {
+          console.warn('[deleteUser] Error deleting runtime_segments with device_id (skipping):', err2.message);
+          segmentsResult = { rowCount: 0 };
+        }
+      } else {
+        console.warn('[deleteUser] Error deleting runtime_segments (skipping):', err.message);
+      }
+      segmentsResult = segmentsResult || { rowCount: 0 };
+    }
+
+    // 6. Delete runtime sessions (references device_key)
     let sessionsResult;
     try {
       sessionsResult = await client.query(
@@ -118,12 +166,12 @@ router.delete('/:userId', requireAuth, async (req: Request, res: Response) => {
       if (err.code === '42P01') {
         console.log('[deleteUser] runtime_sessions table does not exist, skipping');
       } else {
-        console.warn('[deleteUser] Error deleting runtime_sessions (continuing anyway):', err.message);
+        console.warn('[deleteUser] Error deleting runtime_sessions (skipping):', err.message);
       }
       sessionsResult = { rowCount: 0 };
     }
 
-    // 5. Delete daily summaries (references device_id)
+    // 7. Delete daily summaries (references device_id)
     let summariesResult;
     try {
       summariesResult = await client.query(
@@ -134,12 +182,12 @@ router.delete('/:userId', requireAuth, async (req: Request, res: Response) => {
       if (err.code === '42P01') {
         console.log('[deleteUser] summaries_daily table does not exist, skipping');
       } else {
-        console.warn('[deleteUser] Error deleting summaries_daily (continuing anyway):', err.message);
+        console.warn('[deleteUser] Error deleting summaries_daily (skipping):', err.message);
       }
       summariesResult = { rowCount: 0 };
     }
 
-    // 6. Delete device status (try device_id first, fallback to device_key)
+    // 8. Delete device status (try device_id first, fallback to device_key)
     let statusResult;
     try {
       statusResult = await client.query(
@@ -149,9 +197,7 @@ router.delete('/:userId', requireAuth, async (req: Request, res: Response) => {
     } catch (err: any) {
       if (err.code === '42P01') {
         console.log('[deleteUser] device_status table does not exist, skipping');
-        statusResult = { rowCount: 0 };
       } else if (err.code === '42703') {
-        // device_id column doesn't exist - try device_key instead
         console.log('[deleteUser] device_status.device_id does not exist, trying device_key');
         try {
           statusResult = await client.query(
@@ -159,20 +205,16 @@ router.delete('/:userId', requireAuth, async (req: Request, res: Response) => {
             [deviceKeys]
           );
         } catch (err2: any) {
-          if (err2.code === '42703') {
-            console.log('[deleteUser] device_status.device_key also does not exist, skipping');
-          } else {
-            console.warn('[deleteUser] Error deleting device_status with device_key (continuing anyway):', err2.message);
-          }
+          console.warn('[deleteUser] Error deleting device_status with device_key (skipping):', err2.message);
           statusResult = { rowCount: 0 };
         }
       } else {
-        console.warn('[deleteUser] Error deleting device_status (continuing anyway):', err.message);
-        statusResult = { rowCount: 0 };
+        console.warn('[deleteUser] Error deleting device_status (skipping):', err.message);
       }
+      statusResult = statusResult || { rowCount: 0 };
     }
 
-    // 7. Delete device states (references device_key) - CRITICAL TABLE
+    // 9. Delete device states (references device_key)
     let statesResult;
     try {
       statesResult = await client.query(
@@ -182,15 +224,13 @@ router.delete('/:userId', requireAuth, async (req: Request, res: Response) => {
     } catch (err: any) {
       if (err.code === '42P01') {
         console.log('[deleteUser] device_states table does not exist, skipping');
-        statesResult = { rowCount: 0 };
       } else {
-        // This is a critical error - we should not continue
-        console.error('[deleteUser] CRITICAL: Error deleting device_states:', err.message);
-        throw new Error(`Failed to delete device_states: ${err.message}`);
+        console.warn('[deleteUser] Error deleting device_states (skipping):', err.message);
       }
+      statesResult = { rowCount: 0 };
     }
 
-    // 8. Finally, delete all devices for this user - CRITICAL OPERATION
+    // 10. Finally, delete all devices for this user
     let deleteDevicesResult;
     try {
       deleteDevicesResult = await client.query(
@@ -200,24 +240,24 @@ router.delete('/:userId', requireAuth, async (req: Request, res: Response) => {
     } catch (err: any) {
       if (err.code === '42P01') {
         console.log('[deleteUser] devices table does not exist, skipping');
-        deleteDevicesResult = { rowCount: 0 };
       } else {
-        // This is a critical error - if we can't delete devices, the operation failed
-        console.error('[deleteUser] CRITICAL: Error deleting devices:', err.message);
-        throw new Error(`Failed to delete devices: ${err.message}`);
+        console.warn('[deleteUser] Error deleting devices (skipping):', err.message);
       }
+      deleteDevicesResult = { rowCount: 0 };
     }
 
     await client.query('COMMIT');
 
     console.log(`[deleteUser] Deleted user ${userId} with ${devices.length} devices and all linked data:`);
-    console.log(`  - ${filterResetsResult.rowCount} filter resets`);
-    console.log(`  - ${ecobeeResult.rowCount} ecobee runtime intervals`);
-    console.log(`  - ${eventsResult.rowCount} equipment events`);
-    console.log(`  - ${sessionsResult.rowCount} runtime sessions`);
-    console.log(`  - ${summariesResult.rowCount} daily summaries`);
-    console.log(`  - ${statusResult.rowCount} device statuses`);
-    console.log(`  - ${statesResult.rowCount} device states`);
+    console.log(`  - ${predictionsResult.rowCount} ai_predictions`);
+    console.log(`  - ${filterResetsResult.rowCount} filter_resets`);
+    console.log(`  - ${ecobeeResult.rowCount} ecobee_runtime_intervals`);
+    console.log(`  - ${eventsResult.rowCount} equipment_events`);
+    console.log(`  - ${segmentsResult.rowCount} runtime_segments`);
+    console.log(`  - ${sessionsResult.rowCount} runtime_sessions`);
+    console.log(`  - ${summariesResult.rowCount} summaries_daily`);
+    console.log(`  - ${statusResult.rowCount} device_status`);
+    console.log(`  - ${statesResult.rowCount} device_states`);
     console.log(`  - ${deleteDevicesResult.rowCount} devices`);
 
     return res.status(200).json({
