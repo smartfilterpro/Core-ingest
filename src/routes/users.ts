@@ -42,52 +42,100 @@ router.delete('/:userId', requireAuth, async (req: Request, res: Response) => {
     // Order matters: delete dependent records before parent records
 
     // 1. Delete filter resets (references device_id)
-    const filterResetsResult = await client.query(
-      'DELETE FROM filter_resets WHERE device_id = ANY($1::int[])',
-      [deviceIds]
-    );
+    let filterResetsResult;
+    try {
+      filterResetsResult = await client.query(
+        'DELETE FROM filter_resets WHERE device_id = ANY($1)',
+        [deviceIds]
+      );
+    } catch (err: any) {
+      console.error('[deleteUser] Error deleting filter_resets:', err.message);
+      throw new Error(`Failed to delete filter_resets: ${err.message}`);
+    }
 
     // 2. Delete Ecobee runtime intervals (references device_key)
-    const ecobeeResult = await client.query(
-      'DELETE FROM ecobee_runtime_intervals WHERE device_key = ANY($1::varchar[])',
-      [deviceKeys]
-    );
+    let ecobeeResult;
+    try {
+      ecobeeResult = await client.query(
+        'DELETE FROM ecobee_runtime_intervals WHERE device_key = ANY($1)',
+        [deviceKeys]
+      );
+    } catch (err: any) {
+      console.error('[deleteUser] Error deleting ecobee_runtime_intervals:', err.message);
+      throw new Error(`Failed to delete ecobee_runtime_intervals: ${err.message}`);
+    }
 
     // 3. Delete equipment events (references device_key)
-    const eventsResult = await client.query(
-      'DELETE FROM equipment_events WHERE device_key = ANY($1::varchar[])',
-      [deviceKeys]
-    );
+    let eventsResult;
+    try {
+      eventsResult = await client.query(
+        'DELETE FROM equipment_events WHERE device_key = ANY($1)',
+        [deviceKeys]
+      );
+    } catch (err: any) {
+      console.error('[deleteUser] Error deleting equipment_events:', err.message);
+      throw new Error(`Failed to delete equipment_events: ${err.message}`);
+    }
 
     // 4. Delete runtime sessions (references device_key)
-    const sessionsResult = await client.query(
-      'DELETE FROM runtime_sessions WHERE device_key = ANY($1::varchar[])',
-      [deviceKeys]
-    );
+    let sessionsResult;
+    try {
+      sessionsResult = await client.query(
+        'DELETE FROM runtime_sessions WHERE device_key = ANY($1)',
+        [deviceKeys]
+      );
+    } catch (err: any) {
+      console.error('[deleteUser] Error deleting runtime_sessions:', err.message);
+      throw new Error(`Failed to delete runtime_sessions: ${err.message}`);
+    }
 
     // 5. Delete daily summaries (references device_id)
-    const summariesResult = await client.query(
-      'DELETE FROM summaries_daily WHERE device_id = ANY($1::int[])',
-      [deviceIds]
-    );
+    let summariesResult;
+    try {
+      summariesResult = await client.query(
+        'DELETE FROM summaries_daily WHERE device_id = ANY($1)',
+        [deviceIds]
+      );
+    } catch (err: any) {
+      console.error('[deleteUser] Error deleting summaries_daily:', err.message);
+      throw new Error(`Failed to delete summaries_daily: ${err.message}`);
+    }
 
     // 6. Delete device status (references device_id)
-    const statusResult = await client.query(
-      'DELETE FROM device_status WHERE device_id = ANY($1::int[])',
-      [deviceIds]
-    );
+    let statusResult;
+    try {
+      statusResult = await client.query(
+        'DELETE FROM device_status WHERE device_id = ANY($1)',
+        [deviceIds]
+      );
+    } catch (err: any) {
+      console.error('[deleteUser] Error deleting device_status:', err.message);
+      throw new Error(`Failed to delete device_status: ${err.message}`);
+    }
 
     // 7. Delete device states (references device_key)
-    const statesResult = await client.query(
-      'DELETE FROM device_states WHERE device_key = ANY($1::varchar[])',
-      [deviceKeys]
-    );
+    let statesResult;
+    try {
+      statesResult = await client.query(
+        'DELETE FROM device_states WHERE device_key = ANY($1)',
+        [deviceKeys]
+      );
+    } catch (err: any) {
+      console.error('[deleteUser] Error deleting device_states:', err.message);
+      throw new Error(`Failed to delete device_states: ${err.message}`);
+    }
 
     // 8. Finally, delete all devices for this user
-    const deleteDevicesResult = await client.query(
-      'DELETE FROM devices WHERE user_id = $1',
-      [userId]
-    );
+    let deleteDevicesResult;
+    try {
+      deleteDevicesResult = await client.query(
+        'DELETE FROM devices WHERE user_id = $1',
+        [userId]
+      );
+    } catch (err: any) {
+      console.error('[deleteUser] Error deleting devices:', err.message);
+      throw new Error(`Failed to delete devices: ${err.message}`);
+    }
 
     await client.query('COMMIT');
 
