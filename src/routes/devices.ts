@@ -184,6 +184,7 @@ router.patch('/:device_id', async (req: Request, res: Response) => {
 /**
  * DELETE /devices/:deviceId
  * Deletes a specific device and all associated data (runtime sessions, filtered data, etc.)
+ * Uses a transaction to ensure all related records are deleted in the correct order
  */
 router.delete('/:deviceId', async (req: Request, res: Response) => {
   const { deviceId } = req.params;
@@ -192,27 +193,71 @@ router.delete('/:deviceId', async (req: Request, res: Response) => {
     return res.status(400).json({ ok: false, error: 'Missing deviceId' });
   }
 
+  const client = await pool.connect();
+
   try {
-    const result = await pool.query(
-      'DELETE FROM devices WHERE device_id = $1 OR device_key = $1 RETURNING device_id, device_key, device_name',
+    await client.query('BEGIN');
+
+    // First, get the device to verify it exists and get device_key
+    const deviceResult = await client.query(
+      'SELECT device_id, device_key, device_name FROM devices WHERE device_id = $1 OR device_key = $1',
       [deviceId]
     );
 
-    if (result.rowCount === 0) {
+    if (deviceResult.rowCount === 0) {
+      await client.query('ROLLBACK');
       return res.status(404).json({ ok: false, error: 'Device not found' });
     }
 
-    const deletedDevice = result.rows[0];
-    console.log(`[deleteDevice] Deleted device ${deletedDevice.device_id} (${deletedDevice.device_key}) and all linked data.`);
+    const device = deviceResult.rows[0];
+    const { device_id, device_key, device_name } = device;
+
+    // Delete all related records in correct order to avoid foreign key constraint violations
+    // Order matters: delete dependent records before parent records
+
+    // 1. Delete filter resets (references device_id)
+    await client.query('DELETE FROM filter_resets WHERE device_id = $1', [device_id]);
+
+    // 2. Delete Ecobee runtime intervals (references device_key)
+    await client.query('DELETE FROM ecobee_runtime_intervals WHERE device_key = $1', [device_key]);
+
+    // 3. Delete equipment events (references device_key)
+    await client.query('DELETE FROM equipment_events WHERE device_key = $1', [device_key]);
+
+    // 4. Delete runtime sessions (references device_key)
+    await client.query('DELETE FROM runtime_sessions WHERE device_key = $1', [device_key]);
+
+    // 5. Delete daily summaries (references device_id)
+    await client.query('DELETE FROM summaries_daily WHERE device_id = $1', [device_id]);
+
+    // 6. Delete device status (references device_key)
+    await client.query('DELETE FROM device_status WHERE device_key = $1', [device_key]);
+
+    // 7. Delete device states (references device_key)
+    await client.query('DELETE FROM device_states WHERE device_key = $1', [device_key]);
+
+    // 8. Finally, delete the device itself
+    await client.query('DELETE FROM devices WHERE device_id = $1', [device_id]);
+
+    await client.query('COMMIT');
+
+    console.log(`[deleteDevice] Deleted device ${device_id} (${device_key}) and all linked data.`);
 
     return res.status(200).json({
       ok: true,
-      message: `Device ${deletedDevice.device_name || deletedDevice.device_key} deleted successfully.`,
-      device: deletedDevice
+      message: `Device ${device_name || device_key} deleted successfully.`,
+      device: {
+        device_id,
+        device_key,
+        device_name
+      }
     });
   } catch (err: any) {
+    await client.query('ROLLBACK');
     console.error('[deleteDevice] ERROR:', err.message);
     return res.status(500).json({ ok: false, error: err.message });
+  } finally {
+    client.release();
   }
 });
 
