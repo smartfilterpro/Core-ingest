@@ -217,7 +217,17 @@ router.delete('/:deviceId', requireAuth, async (req: Request, res: Response) => 
     // Order matters: delete dependent records before parent records
 
     // 1. Delete filter resets (references device_id)
-    await client.query('DELETE FROM filter_resets WHERE device_id = $1', [device_id]);
+    // Note: This table might not exist if migration wasn't run
+    try {
+      await client.query('DELETE FROM filter_resets WHERE device_id = $1', [device_id]);
+    } catch (err: any) {
+      if (err.code === '42P01' || err.code === '42703') {
+        // Table or column doesn't exist - skip it
+        console.log('[deleteDevice] filter_resets table/column does not exist, skipping');
+      } else {
+        throw err;
+      }
+    }
 
     // 2. Delete Ecobee runtime intervals (references device_key)
     await client.query('DELETE FROM ecobee_runtime_intervals WHERE device_key = $1', [device_key]);
@@ -232,7 +242,15 @@ router.delete('/:deviceId', requireAuth, async (req: Request, res: Response) => 
     await client.query('DELETE FROM summaries_daily WHERE device_id = $1', [device_id]);
 
     // 6. Delete device status (references device_id)
-    await client.query('DELETE FROM device_status WHERE device_id = $1', [device_id]);
+    try {
+      await client.query('DELETE FROM device_status WHERE device_id = $1', [device_id]);
+    } catch (err: any) {
+      if (err.code === '42P01' || err.code === '42703') {
+        console.log('[deleteDevice] device_status table/column does not exist, skipping');
+      } else {
+        throw err;
+      }
+    }
 
     // 7. Delete device states (references device_key)
     await client.query('DELETE FROM device_states WHERE device_key = $1', [device_key]);

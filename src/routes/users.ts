@@ -42,6 +42,7 @@ router.delete('/:userId', requireAuth, async (req: Request, res: Response) => {
     // Order matters: delete dependent records before parent records
 
     // 1. Delete filter resets (references device_id)
+    // Note: This table might not exist if migration wasn't run
     let filterResetsResult;
     try {
       filterResetsResult = await client.query(
@@ -49,8 +50,18 @@ router.delete('/:userId', requireAuth, async (req: Request, res: Response) => {
         [deviceIds]
       );
     } catch (err: any) {
-      console.error('[deleteUser] Error deleting filter_resets:', err.message);
-      throw new Error(`Failed to delete filter_resets: ${err.message}`);
+      if (err.code === '42P01') {
+        // Table doesn't exist - skip it
+        console.log('[deleteUser] filter_resets table does not exist, skipping');
+        filterResetsResult = { rowCount: 0 };
+      } else if (err.code === '42703') {
+        // Column doesn't exist - skip it
+        console.log('[deleteUser] filter_resets.device_id column does not exist, skipping');
+        filterResetsResult = { rowCount: 0 };
+      } else {
+        console.error('[deleteUser] Error deleting filter_resets:', err.message);
+        throw new Error(`Failed to delete filter_resets: ${err.message}`);
+      }
     }
 
     // 2. Delete Ecobee runtime intervals (references device_key)
@@ -109,8 +120,16 @@ router.delete('/:userId', requireAuth, async (req: Request, res: Response) => {
         [deviceIds]
       );
     } catch (err: any) {
-      console.error('[deleteUser] Error deleting device_status:', err.message);
-      throw new Error(`Failed to delete device_status: ${err.message}`);
+      if (err.code === '42P01') {
+        console.log('[deleteUser] device_status table does not exist, skipping');
+        statusResult = { rowCount: 0 };
+      } else if (err.code === '42703') {
+        console.log('[deleteUser] device_status.device_id column does not exist, skipping');
+        statusResult = { rowCount: 0 };
+      } else {
+        console.error('[deleteUser] Error deleting device_status:', err.message);
+        throw new Error(`Failed to delete device_status: ${err.message}`);
+      }
     }
 
     // 7. Delete device states (references device_key)
