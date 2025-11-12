@@ -306,25 +306,29 @@ router.delete('/:deviceId', requireAuth, async (req: Request, res: Response) => 
       }
     }
 
-    // 7. Delete device states (references device_key)
+    // 7. Delete device states (references device_key) - CRITICAL TABLE
     try {
       await client.query('DELETE FROM device_states WHERE device_key = $1', [device_key]);
     } catch (err: any) {
       if (err.code === '42P01') {
         console.log('[deleteDevice] device_states table does not exist, skipping');
       } else {
-        console.warn('[deleteDevice] Error deleting device_states (continuing anyway):', err.message);
+        // This is a critical error - we should not continue
+        console.error('[deleteDevice] CRITICAL: Error deleting device_states:', err.message);
+        throw err;
       }
     }
 
-    // 8. Finally, delete the device itself
+    // 8. Finally, delete the device itself - CRITICAL OPERATION
     try {
       await client.query('DELETE FROM devices WHERE device_id = $1', [device_id]);
     } catch (err: any) {
       if (err.code === '42P01') {
         console.log('[deleteDevice] devices table does not exist, skipping');
       } else {
-        console.warn('[deleteDevice] Error deleting devices (continuing anyway):', err.message);
+        // This is a critical error - if we can't delete the device, the operation failed
+        console.error('[deleteDevice] CRITICAL: Error deleting devices:', err.message);
+        throw err;
       }
     }
 
