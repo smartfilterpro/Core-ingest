@@ -64,14 +64,14 @@ router.delete('/:userId', requireAuth, async (req: Request, res: Response) => {
         } catch (err2: any) {
           if (err2.code === '42703') {
             console.log('[deleteUser] filter_resets.device_key also does not exist, skipping');
-            filterResetsResult = { rowCount: 0 };
           } else {
-            throw err2;
+            console.warn('[deleteUser] Error deleting filter_resets with device_key (continuing anyway):', err2.message);
           }
+          filterResetsResult = { rowCount: 0 };
         }
       } else {
-        console.error('[deleteUser] Error deleting filter_resets:', err.message);
-        throw new Error(`Failed to delete filter_resets: ${err.message}`);
+        console.warn('[deleteUser] Error deleting filter_resets (continuing anyway):', err.message);
+        filterResetsResult = { rowCount: 0 };
       }
     }
 
@@ -161,14 +161,14 @@ router.delete('/:userId', requireAuth, async (req: Request, res: Response) => {
         } catch (err2: any) {
           if (err2.code === '42703') {
             console.log('[deleteUser] device_status.device_key also does not exist, skipping');
-            statusResult = { rowCount: 0 };
           } else {
-            throw err2;
+            console.warn('[deleteUser] Error deleting device_status with device_key (continuing anyway):', err2.message);
           }
+          statusResult = { rowCount: 0 };
         }
       } else {
-        console.error('[deleteUser] Error deleting device_status:', err.message);
-        throw new Error(`Failed to delete device_status: ${err.message}`);
+        console.warn('[deleteUser] Error deleting device_status (continuing anyway):', err.message);
+        statusResult = { rowCount: 0 };
       }
     }
 
