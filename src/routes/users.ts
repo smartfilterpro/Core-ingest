@@ -19,16 +19,13 @@ router.delete('/:userId', requireAuth, async (req: Request, res: Response) => {
   const client = await pool.connect();
 
   try {
-    await client.query('BEGIN');
-
-    // First, get all devices for this user
+    // First, get all devices for this user (no transaction yet)
     const devicesResult = await client.query(
       'SELECT device_id, device_key, device_name FROM devices WHERE user_id = $1',
       [userId]
     );
 
     if (devicesResult.rowCount === 0) {
-      await client.query('ROLLBACK');
       return res.status(404).json({ ok: false, error: 'No devices found for this user' });
     }
 
@@ -39,8 +36,8 @@ router.delete('/:userId', requireAuth, async (req: Request, res: Response) => {
     console.log(`[deleteUser] Found ${devices.length} devices for user ${userId}`);
 
     // Delete all related records for all devices belonging to this user
-    // Order matters: delete dependent records before parent records
-    // ALL deletions are permissive - if table/entry doesn't exist, just skip
+    // NO TRANSACTION - Each deletion is independent to allow permissive error handling
+    // If one table fails, others can still succeed
 
     // 1. Delete AI predictions (references device_id or device_key)
     let predictionsResult;
@@ -246,8 +243,6 @@ router.delete('/:userId', requireAuth, async (req: Request, res: Response) => {
       deleteDevicesResult = { rowCount: 0 };
     }
 
-    await client.query('COMMIT');
-
     console.log(`[deleteUser] Deleted user ${userId} with ${devices.length} devices and all linked data:`);
     console.log(`  - ${predictionsResult.rowCount} ai_predictions`);
     console.log(`  - ${filterResetsResult.rowCount} filter_resets`);
@@ -271,7 +266,6 @@ router.delete('/:userId', requireAuth, async (req: Request, res: Response) => {
       }))
     });
   } catch (err: any) {
-    await client.query('ROLLBACK');
     console.error('[deleteUser] ERROR:', err.message);
     return res.status(500).json({ ok: false, error: err.message });
   } finally {
