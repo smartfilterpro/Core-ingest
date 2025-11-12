@@ -85,11 +85,10 @@ router.delete('/:userId', requireAuth, async (req: Request, res: Response) => {
     } catch (err: any) {
       if (err.code === '42P01') {
         console.log('[deleteUser] ecobee_runtime_intervals table does not exist, skipping');
-        ecobeeResult = { rowCount: 0 };
       } else {
-        console.error('[deleteUser] Error deleting ecobee_runtime_intervals:', err.message);
-        throw new Error(`Failed to delete ecobee_runtime_intervals: ${err.message}`);
+        console.warn('[deleteUser] Error deleting ecobee_runtime_intervals (continuing anyway):', err.message);
       }
+      ecobeeResult = { rowCount: 0 };
     }
 
     // 3. Delete equipment events (references device_key)
@@ -102,11 +101,10 @@ router.delete('/:userId', requireAuth, async (req: Request, res: Response) => {
     } catch (err: any) {
       if (err.code === '42P01') {
         console.log('[deleteUser] equipment_events table does not exist, skipping');
-        eventsResult = { rowCount: 0 };
       } else {
-        console.error('[deleteUser] Error deleting equipment_events:', err.message);
-        throw new Error(`Failed to delete equipment_events: ${err.message}`);
+        console.warn('[deleteUser] Error deleting equipment_events (continuing anyway):', err.message);
       }
+      eventsResult = { rowCount: 0 };
     }
 
     // 4. Delete runtime sessions (references device_key)
@@ -119,11 +117,10 @@ router.delete('/:userId', requireAuth, async (req: Request, res: Response) => {
     } catch (err: any) {
       if (err.code === '42P01') {
         console.log('[deleteUser] runtime_sessions table does not exist, skipping');
-        sessionsResult = { rowCount: 0 };
       } else {
-        console.error('[deleteUser] Error deleting runtime_sessions:', err.message);
-        throw new Error(`Failed to delete runtime_sessions: ${err.message}`);
+        console.warn('[deleteUser] Error deleting runtime_sessions (continuing anyway):', err.message);
       }
+      sessionsResult = { rowCount: 0 };
     }
 
     // 5. Delete daily summaries (references device_id)
@@ -136,11 +133,10 @@ router.delete('/:userId', requireAuth, async (req: Request, res: Response) => {
     } catch (err: any) {
       if (err.code === '42P01') {
         console.log('[deleteUser] summaries_daily table does not exist, skipping');
-        summariesResult = { rowCount: 0 };
       } else {
-        console.error('[deleteUser] Error deleting summaries_daily:', err.message);
-        throw new Error(`Failed to delete summaries_daily: ${err.message}`);
+        console.warn('[deleteUser] Error deleting summaries_daily (continuing anyway):', err.message);
       }
+      summariesResult = { rowCount: 0 };
     }
 
     // 6. Delete device status (try device_id first, fallback to device_key)
@@ -186,11 +182,10 @@ router.delete('/:userId', requireAuth, async (req: Request, res: Response) => {
     } catch (err: any) {
       if (err.code === '42P01') {
         console.log('[deleteUser] device_states table does not exist, skipping');
-        statesResult = { rowCount: 0 };
       } else {
-        console.error('[deleteUser] Error deleting device_states:', err.message);
-        throw new Error(`Failed to delete device_states: ${err.message}`);
+        console.warn('[deleteUser] Error deleting device_states (continuing anyway):', err.message);
       }
+      statesResult = { rowCount: 0 };
     }
 
     // 8. Finally, delete all devices for this user
@@ -203,11 +198,10 @@ router.delete('/:userId', requireAuth, async (req: Request, res: Response) => {
     } catch (err: any) {
       if (err.code === '42P01') {
         console.log('[deleteUser] devices table does not exist, skipping');
-        deleteDevicesResult = { rowCount: 0 };
       } else {
-        console.error('[deleteUser] Error deleting devices:', err.message);
-        throw new Error(`Failed to delete devices: ${err.message}`);
+        console.warn('[deleteUser] Error deleting devices (continuing anyway):', err.message);
       }
+      deleteDevicesResult = { rowCount: 0 };
     }
 
     await client.query('COMMIT');
