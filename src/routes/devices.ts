@@ -1,6 +1,7 @@
 // routes/devices.ts
 import express, { Request, Response } from 'express';
 import { pool } from '../db/pool';
+import { requireAuth } from '../middleware/auth';
 
 const router = express.Router();
 
@@ -74,7 +75,7 @@ router.get('/:deviceKey', async (req: Request, res: Response) => {
  * Accepts device_id (can be device_key or device_id field)
  * Updates: zip_prefix, filter_target_hours, use_forced_air_for_heat, zip_code_prefix, timezone, user_id
  */
-router.patch('/:device_id', async (req: Request, res: Response) => {
+router.patch('/:device_id', requireAuth, async (req: Request, res: Response) => {
   try {
     const { device_id } = req.params;
     const {
@@ -186,7 +187,7 @@ router.patch('/:device_id', async (req: Request, res: Response) => {
  * Deletes a specific device and all associated data (runtime sessions, filtered data, etc.)
  * Uses a transaction to ensure all related records are deleted in the correct order
  */
-router.delete('/:deviceId', async (req: Request, res: Response) => {
+router.delete('/:deviceId', requireAuth, async (req: Request, res: Response) => {
   const { deviceId } = req.params;
 
   if (!deviceId) {

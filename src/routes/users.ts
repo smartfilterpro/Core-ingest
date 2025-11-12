@@ -1,5 +1,6 @@
 import express, { Request, Response } from 'express';
 import { pool } from '../db/pool';
+import { requireAuth } from '../middleware/auth';
 
 const router = express.Router();
 
@@ -7,7 +8,7 @@ const router = express.Router();
  * DELETE /users/:userId
  * Deletes a user and all associated thermostats and data.
  */
-router.delete('/:userId', async (req: Request, res: Response) => {
+router.delete('/:userId', requireAuth, async (req: Request, res: Response) => {
   const { userId } = req.params;
 
   if (!userId) {
