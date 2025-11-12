@@ -33,6 +33,20 @@ export async function requireAuth(req: AuthedRequest, res: Response, next: NextF
       return res.status(401).json({ ok: false, error: 'Unauthorized: missing core_token' });
     }
 
+    // 1️⃣ Legacy static CORE_API_KEY support
+    const coreApiKey = process.env.CORE_API_KEY;
+    if (coreApiKey && token === coreApiKey) {
+      log.info({ path: req.path }, 'Authorized via static CORE_API_KEY');
+      req.auth = {
+        sub: 'api_key',
+        iss: 'static',
+        aud: 'core',
+        raw: { method: 'api_key' }
+      };
+      return next();
+    }
+
+    // 2️⃣ JWT verification
     const payload = await verifyCoreToken(token);
     // Optional logging (trim large payloads)
     log.info(
