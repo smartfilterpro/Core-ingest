@@ -17,29 +17,31 @@ const mode = options?.fullHistory ? 'ALL HISTORY' : `LAST ${options?.days || 7} 
       -- Duration = time until next mode change (or current time if no next change)
       -- Filter out invalid sensor readings (e.g., -500)
       SELECT
-        device_key,
-        thermostat_mode,
-        recorded_at as period_start,
-        LEAD(recorded_at) OVER (PARTITION BY device_key ORDER BY recorded_at) as period_end,
+        ee.device_key,
+        d.timezone,
+        ee.thermostat_mode,
+        ee.recorded_at as period_start,
+        LEAD(ee.recorded_at) OVER (PARTITION BY ee.device_key ORDER BY ee.recorded_at) as period_end,
         CASE
-          WHEN last_temperature::NUMERIC <= 0 OR last_temperature::NUMERIC < -100 OR last_temperature::NUMERIC > 200 THEN NULL
-          ELSE last_temperature
+          WHEN ee.last_temperature::NUMERIC <= 0 OR ee.last_temperature::NUMERIC < -100 OR ee.last_temperature::NUMERIC > 200 THEN NULL
+          ELSE ee.last_temperature
         END as last_temperature,
         CASE
-          WHEN last_humidity::NUMERIC <= 0 THEN NULL
-          ELSE last_humidity
+          WHEN ee.last_humidity::NUMERIC <= 0 THEN NULL
+          ELSE ee.last_humidity
         END as last_humidity
-      FROM equipment_events
-      WHERE (last_temperature IS NULL
-             OR (last_temperature::NUMERIC > 0 AND last_temperature::NUMERIC > -100 AND last_temperature::NUMERIC < 200))
-        AND (last_humidity IS NULL OR last_humidity::NUMERIC > 0)
-        ${dateFilter ? dateFilter.replace('rs.started_at', 'recorded_at') : ''}
+      FROM equipment_events ee
+      INNER JOIN devices d ON d.device_key = ee.device_key
+      WHERE (ee.last_temperature IS NULL
+             OR (ee.last_temperature::NUMERIC > 0 AND ee.last_temperature::NUMERIC > -100 AND ee.last_temperature::NUMERIC < 200))
+        AND (ee.last_humidity IS NULL OR ee.last_humidity::NUMERIC > 0)
+        ${dateFilter ? dateFilter.replace('rs.started_at', 'ee.recorded_at') : ''}
     ),
     thermostat_mode_daily AS (
-      -- Calculate seconds spent in each mode per day
+      -- Calculate seconds spent in each mode per day (using device's local timezone)
       SELECT
         device_key,
-        DATE(period_start) as date,
+        DATE(period_start AT TIME ZONE 'UTC' AT TIME ZONE COALESCE(timezone, 'UTC')) as date,
         thermostat_mode,
         SUM(
           CASE
@@ -52,34 +54,35 @@ const mode = options?.fullHistory ? 'ALL HISTORY' : `LAST ${options?.days || 7} 
         AVG(last_temperature)::NUMERIC as avg_temperature,
         AVG(last_humidity)::NUMERIC as avg_humidity
       FROM thermostat_mode_periods
-      GROUP BY device_key, DATE(period_start), thermostat_mode
+      GROUP BY device_key, DATE(period_start AT TIME ZONE 'UTC' AT TIME ZONE COALESCE(timezone, 'UTC')), thermostat_mode
     ),
     all_event_dates AS (
-      -- Capture ALL dates with equipment events (even idle days)
+      -- Capture ALL dates with equipment events (even idle days) using device's local timezone
       -- Filter out invalid temperatures for averaging
       SELECT DISTINCT
-        device_key,
-        DATE(recorded_at) as date,
+        ee.device_key,
+        DATE(ee.recorded_at AT TIME ZONE 'UTC' AT TIME ZONE COALESCE(d.timezone, 'UTC')) as date,
         AVG(CASE
-          WHEN last_temperature::NUMERIC > 0 AND last_temperature::NUMERIC > -100 AND last_temperature::NUMERIC < 200
-          THEN last_temperature::NUMERIC
+          WHEN ee.last_temperature::NUMERIC > 0 AND ee.last_temperature::NUMERIC > -100 AND ee.last_temperature::NUMERIC < 200
+          THEN ee.last_temperature::NUMERIC
           ELSE NULL
         END) as avg_temperature,
         AVG(CASE
-          WHEN last_humidity::NUMERIC > 0
-          THEN last_humidity::NUMERIC
+          WHEN ee.last_humidity::NUMERIC > 0
+          THEN ee.last_humidity::NUMERIC
           ELSE NULL
         END) as avg_humidity
-      FROM equipment_events
+      FROM equipment_events ee
+      INNER JOIN devices d ON d.device_key = ee.device_key
       WHERE 1=1
-        ${dateFilter ? dateFilter.replace('rs.started_at', 'recorded_at') : ''}
-      GROUP BY device_key, DATE(recorded_at)
+        ${dateFilter ? dateFilter.replace('rs.started_at', 'ee.recorded_at') : ''}
+      GROUP BY ee.device_key, DATE(ee.recorded_at AT TIME ZONE 'UTC' AT TIME ZONE COALESCE(d.timezone, 'UTC'))
     ),
     equipment_runtime_daily AS (
-      -- Keep existing HVAC equipment runtime calculation
+      -- Keep existing HVAC equipment runtime calculation (using device's local timezone)
       SELECT
         rs.device_key,
-        DATE(rs.started_at) as date,
+        DATE(rs.started_at AT TIME ZONE 'UTC' AT TIME ZONE COALESCE(d.timezone, 'UTC')) as date,
         SUM(COALESCE(rs.runtime_seconds, 0))::INT as runtime_seconds_total,
         SUM(CASE WHEN rs.mode = 'heat' THEN COALESCE(rs.runtime_seconds, 0) ELSE 0 END)::INT as runtime_seconds_heat,
         SUM(CASE WHEN rs.mode = 'cool' THEN COALESCE(rs.runtime_seconds, 0) ELSE 0 END)::INT as runtime_seconds_cool,
@@ -88,9 +91,10 @@ const mode = options?.fullHistory ? 'ALL HISTORY' : `LAST ${options?.days || 7} 
         SUM(CASE WHEN rs.mode NOT IN ('heat', 'cool', 'fan', 'auxheat') OR rs.mode IS NULL THEN COALESCE(rs.runtime_seconds, 0) ELSE 0 END)::INT as runtime_seconds_unknown,
         COUNT(*)::INT as runtime_sessions_count
       FROM runtime_sessions rs
+      INNER JOIN devices d ON d.device_key = rs.device_key
       WHERE rs.started_at IS NOT NULL
         ${dateFilter}
-      GROUP BY rs.device_key, DATE(rs.started_at)
+      GROUP BY rs.device_key, DATE(rs.started_at AT TIME ZONE 'UTC' AT TIME ZONE COALESCE(d.timezone, 'UTC'))
     ),
     daily AS (
       SELECT
