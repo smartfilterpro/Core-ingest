@@ -6,7 +6,9 @@ import { Pool } from 'pg';
  * Compares Ecobee's ground-truth runtime data (from Runtime Reports)
  * with our calculated runtime (from sessionStitcher + summaryWorker).
  *
- * Updates summaries_daily with validated values and flags discrepancies.
+ * Updates summaries_daily with validated values. When discrepancies exceed
+ * 5 minutes (300 seconds), automatically corrects the runtime values with
+ * Ecobee's ground-truth data.
  *
  * Schedule: Daily at 04:00 UTC (runs after summaryWorker at 03:00 UTC)
  */
@@ -84,6 +86,43 @@ export async function runRuntimeValidator(
             COALESCE(ct.calculated_total, 0)
           ) > 300 THEN NOW()
           ELSE NULL
+        END,
+
+        -- Auto-correct runtime values when discrepancy > 5 minutes
+        runtime_seconds_heat = CASE
+          WHEN ABS(
+            (edt.validated_heating + edt.validated_cooling + edt.validated_auxheat) -
+            COALESCE(ct.calculated_total, 0)
+          ) > 300 THEN edt.validated_heating
+          ELSE s.runtime_seconds_heat
+        END,
+        runtime_seconds_cool = CASE
+          WHEN ABS(
+            (edt.validated_heating + edt.validated_cooling + edt.validated_auxheat) -
+            COALESCE(ct.calculated_total, 0)
+          ) > 300 THEN edt.validated_cooling
+          ELSE s.runtime_seconds_cool
+        END,
+        runtime_seconds_auxheat = CASE
+          WHEN ABS(
+            (edt.validated_heating + edt.validated_cooling + edt.validated_auxheat) -
+            COALESCE(ct.calculated_total, 0)
+          ) > 300 THEN edt.validated_auxheat
+          ELSE s.runtime_seconds_auxheat
+        END,
+        runtime_seconds_fan = CASE
+          WHEN ABS(
+            (edt.validated_heating + edt.validated_cooling + edt.validated_auxheat) -
+            COALESCE(ct.calculated_total, 0)
+          ) > 300 THEN edt.validated_fan
+          ELSE s.runtime_seconds_fan
+        END,
+        runtime_seconds_total = CASE
+          WHEN ABS(
+            (edt.validated_heating + edt.validated_cooling + edt.validated_auxheat) -
+            COALESCE(ct.calculated_total, 0)
+          ) > 300 THEN edt.validated_heating + edt.validated_cooling + edt.validated_auxheat
+          ELSE s.runtime_seconds_total
         END
       FROM ecobee_daily_totals edt
       INNER JOIN devices d ON d.device_key = edt.device_key
@@ -117,20 +156,20 @@ export async function runRuntimeValidator(
 
     if (discrepancies.length > 0) {
       console.warn(
-        `[RuntimeValidator] ⚠️ Found ${discrepancies.length} ` +
-        `significant discrepancies (>5 min):`
+        `[RuntimeValidator] 🔧 Auto-corrected ${discrepancies.length} ` +
+        `summaries with significant discrepancies (>5 min):`
       );
       discrepancies.forEach(r => {
         const discrepMin = Math.round(r.discrepancy / 60);
         console.warn(
           `  ${r.device_id} on ${r.date}: ` +
-          `calculated=${r.calculated}s, validated=${r.validated}s, ` +
+          `was=${r.calculated}s, corrected to=${r.validated}s, ` +
           `discrepancy=${discrepMin}min, coverage=${r.coverage?.toFixed(1)}%`
         );
       });
     } else {
       console.log(
-        `[RuntimeValidator] ✅ No significant discrepancies found`
+        `[RuntimeValidator] ✅ No corrections needed (all within 5 min tolerance)`
       );
     }
 
@@ -148,7 +187,7 @@ export async function runRuntimeValidator(
     if (stats[0]) {
       console.log(`[RuntimeValidator] 📊 Stats:`);
       console.log(`  Total validated: ${stats[0].total_validated}`);
-      console.log(`  Corrected: ${stats[0].corrected_count}`);
+      console.log(`  Auto-corrected: ${stats[0].corrected_count}`);
       console.log(`  Avg coverage: ${stats[0].avg_coverage?.toFixed(1)}%`);
       console.log(
         `  Avg discrepancy: ${Math.round(stats[0].avg_discrepancy || 0)}s`
