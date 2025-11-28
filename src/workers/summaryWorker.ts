@@ -80,9 +80,12 @@ const mode = options?.fullHistory ? 'ALL HISTORY' : `LAST ${options?.days || 7} 
     ),
     equipment_runtime_daily AS (
       -- Keep existing HVAC equipment runtime calculation (using device's local timezone)
+      -- FIX: Use ended_at for date calculation to match equipment_events.recorded_at
+      -- When sessionStitcher creates sessions from posted runtime, ended_at = recorded_at
+      -- but started_at = recorded_at - runtime_seconds, which can be the previous day
       SELECT
         rs.device_key,
-        DATE(rs.started_at AT TIME ZONE 'UTC' AT TIME ZONE COALESCE(d.timezone, 'UTC')) as date,
+        DATE(COALESCE(rs.ended_at, rs.started_at) AT TIME ZONE 'UTC' AT TIME ZONE COALESCE(d.timezone, 'UTC')) as date,
         SUM(COALESCE(rs.runtime_seconds, 0))::INT as runtime_seconds_total,
         SUM(CASE WHEN rs.mode = 'heat' THEN COALESCE(rs.runtime_seconds, 0) ELSE 0 END)::INT as runtime_seconds_heat,
         SUM(CASE WHEN rs.mode = 'cool' THEN COALESCE(rs.runtime_seconds, 0) ELSE 0 END)::INT as runtime_seconds_cool,
@@ -92,9 +95,9 @@ const mode = options?.fullHistory ? 'ALL HISTORY' : `LAST ${options?.days || 7} 
         COUNT(*)::INT as runtime_sessions_count
       FROM runtime_sessions rs
       INNER JOIN devices d ON d.device_key = rs.device_key
-      WHERE rs.started_at IS NOT NULL
-        ${dateFilter}
-      GROUP BY rs.device_key, DATE(rs.started_at AT TIME ZONE 'UTC' AT TIME ZONE COALESCE(d.timezone, 'UTC'))
+      WHERE rs.ended_at IS NOT NULL
+        ${dateFilter.replace('rs.started_at', 'rs.ended_at')}
+      GROUP BY rs.device_key, DATE(COALESCE(rs.ended_at, rs.started_at) AT TIME ZONE 'UTC' AT TIME ZONE COALESCE(d.timezone, 'UTC'))
     ),
     daily AS (
       SELECT
