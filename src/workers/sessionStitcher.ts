@@ -619,6 +619,7 @@ export async function backfillRuntimeSessions(options?: { days?: number }) {
     await client.query("BEGIN");
 
     // Find equipment_events with runtime_seconds that don't have matching runtime_sessions
+    // Use date_trunc to handle timestamp precision differences (microseconds vs milliseconds)
     const events = await client.query(`
       SELECT
         ee.id,
@@ -634,7 +635,7 @@ export async function backfillRuntimeSessions(options?: { days?: number }) {
           SELECT 1 FROM runtime_sessions rs
           WHERE rs.device_key = ee.device_key
             AND rs.terminated_reason = 'posted_runtime'
-            AND rs.ended_at = ee.recorded_at
+            AND date_trunc('second', rs.ended_at) = date_trunc('second', ee.recorded_at)
             AND rs.runtime_seconds = ee.runtime_seconds
         )
       ORDER BY ee.recorded_at ASC
