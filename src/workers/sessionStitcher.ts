@@ -200,8 +200,9 @@ async function ensureDeviceState(
 }
 
 /**
- * Process an event that includes runtime_seconds and previous_status.
+ * Process an event that includes runtime_seconds.
  * Creates a completed session directly from the posted runtime data.
+ * Uses previous_status if available, otherwise falls back to equipment_status.
  */
 async function processRuntimeEvent(
   client: PoolClient,
@@ -210,13 +211,15 @@ async function processRuntimeEvent(
   state: DeviceStateRow
 ) {
   const runtime_seconds = event.runtime_seconds;
-  const previous_status = event.previous_status;
   const recorded_at = event.recorded_at;
 
-  if (!previous_status || runtime_seconds <= 0) return;
+  // Use previous_status if available, otherwise fall back to equipment_status
+  const status = event.previous_status || event.equipment_status;
 
-  // Derive mode from previous_status (what it WAS doing)
-  const mode = deriveMode(previous_status, null);
+  if (!status || runtime_seconds <= 0) return;
+
+  // Derive mode from status (what it WAS doing)
+  const mode = deriveMode(status, null);
 
   // Calculate timestamps for the session
   const ended_at = dayjs.utc(recorded_at).toISOString();
@@ -242,7 +245,7 @@ async function processRuntimeEvent(
       device_key, mode, equipment_status, started_at, ended_at,
       runtime_seconds, tick_count, terminated_reason, created_at, updated_at
     ) VALUES ($1, $2, $3, $4, $5, $6, 1, 'posted_runtime', NOW(), NOW())`,
-    [device_key, mode, previous_status, started_at, ended_at, runtime_seconds]
+    [device_key, mode, status, started_at, ended_at, runtime_seconds]
   );
 
   // Calculate filter hours
@@ -259,8 +262,8 @@ async function processRuntimeEvent(
     filterHoursToAdd = postResetDur / 3600.0;
   }
 
-  // Apply filter logic to previous_status (what was actually running)
-  const shouldCountFilter = countsTowardFilter(previous_status, device.use_forced_air_for_heat);
+  // Apply filter logic to status (what was actually running)
+  const shouldCountFilter = countsTowardFilter(status, device.use_forced_air_for_heat);
 
   if (!shouldCountFilter) {
     filterHoursToAdd = 0;
@@ -295,7 +298,7 @@ async function processRuntimeEvent(
 
   console.log(
     `[sessionStitcher] Device ${device_key}: +${addHours.toFixed(2)}h total, ` +
-    `+${filterHoursToAdd.toFixed(2)}h filter (${shouldCountFilter ? previous_status : "excluded"}), ` +
+    `+${filterHoursToAdd.toFixed(2)}h filter (${shouldCountFilter ? status : "excluded"}), ` +
     `usage: ${filter_usage_percent}% [POSTED]`
   );
 
@@ -335,7 +338,8 @@ async function stitchDevice(
     const ts = dayjs.utc(e.recorded_at);
 
     // PRIORITY: If event includes runtime_seconds, use posted data (more accurate)
-    if (e.runtime_seconds && e.runtime_seconds > 0 && e.previous_status) {
+    // processRuntimeEvent will use previous_status if available, otherwise equipment_status
+    if (e.runtime_seconds && e.runtime_seconds > 0) {
       await processRuntimeEvent(client, device_key, e, state);
       continue; // Skip to next event
     }
