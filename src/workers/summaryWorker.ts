@@ -39,9 +39,10 @@ const mode = options?.fullHistory ? 'ALL HISTORY' : `LAST ${options?.days || 7} 
     ),
     thermostat_mode_daily AS (
       -- Calculate seconds spent in each mode per day (using device's local timezone)
+      -- FIX: Use single AT TIME ZONE for timestamptz columns
       SELECT
         device_key,
-        DATE(period_start AT TIME ZONE 'UTC' AT TIME ZONE COALESCE(timezone, 'UTC')) as date,
+        DATE(period_start AT TIME ZONE COALESCE(timezone, 'UTC')) as date,
         thermostat_mode,
         SUM(
           CASE
@@ -54,14 +55,14 @@ const mode = options?.fullHistory ? 'ALL HISTORY' : `LAST ${options?.days || 7} 
         AVG(last_temperature)::NUMERIC as avg_temperature,
         AVG(last_humidity)::NUMERIC as avg_humidity
       FROM thermostat_mode_periods
-      GROUP BY device_key, DATE(period_start AT TIME ZONE 'UTC' AT TIME ZONE COALESCE(timezone, 'UTC')), thermostat_mode
+      GROUP BY device_key, DATE(period_start AT TIME ZONE COALESCE(timezone, 'UTC')), thermostat_mode
     ),
     all_event_dates AS (
       -- Capture ALL dates with equipment events (even idle days) using device's local timezone
-      -- Filter out invalid temperatures for averaging
+      -- FIX: Use single AT TIME ZONE for timestamptz columns
       SELECT DISTINCT
         ee.device_key,
-        DATE(ee.recorded_at AT TIME ZONE 'UTC' AT TIME ZONE COALESCE(d.timezone, 'UTC')) as date,
+        DATE(ee.recorded_at AT TIME ZONE COALESCE(d.timezone, 'UTC')) as date,
         AVG(CASE
           WHEN ee.last_temperature::NUMERIC > 0 AND ee.last_temperature::NUMERIC > -100 AND ee.last_temperature::NUMERIC < 200
           THEN ee.last_temperature::NUMERIC
@@ -76,7 +77,7 @@ const mode = options?.fullHistory ? 'ALL HISTORY' : `LAST ${options?.days || 7} 
       INNER JOIN devices d ON d.device_key = ee.device_key
       WHERE 1=1
         ${dateFilter ? dateFilter.replace('rs.started_at', 'ee.recorded_at') : ''}
-      GROUP BY ee.device_key, DATE(ee.recorded_at AT TIME ZONE 'UTC' AT TIME ZONE COALESCE(d.timezone, 'UTC'))
+      GROUP BY ee.device_key, DATE(ee.recorded_at AT TIME ZONE COALESCE(d.timezone, 'UTC'))
     ),
     equipment_runtime_daily AS (
       -- Keep existing HVAC equipment runtime calculation (using device's local timezone)
