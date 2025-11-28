@@ -24,7 +24,7 @@ import predictionsRouter from "./routes/predictions";
 import runtimeReportRouter from "./routes/runtimeReport";
 
 // Workers + utilities
-import { runSessionStitcher, runSummaryWorker, runRegionAggregationWorker, bubbleSummarySync, heartbeatWorker } from "./workers/index";
+import { runSessionStitcher, runSummaryWorker, runRegionAggregationWorker, bubbleSummarySync, heartbeatWorker, backfillRuntimeSessions } from "./workers/index";
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -117,6 +117,27 @@ app.get("/workers/run-summary", async (req, res) => {
     res.status(500).json({ ok: false, error: err.message });
   }
 });
+
+/* ------------------- Backfill Runtime Sessions ------------------ */
+app.get("/workers/backfill-sessions", async (req, res) => {
+  const days = req.query.days ? parseInt(req.query.days as string) : 30;
+
+  console.log(`[workers] Backfilling runtime sessions for last ${days} days...`);
+
+  try {
+    const result = await backfillRuntimeSessions({ days });
+
+    res.status(200).json({
+      ok: true,
+      message: `Backfill completed: ${result.created} sessions created, ${result.skipped} skipped`,
+      result
+    });
+  } catch (err: any) {
+    console.error("[workers] Error backfilling sessions:", err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 /* ----------------------- Diagnostic: Check Mode Data ---------------------- */
 app.get("/diagnostic/mode-data/:deviceId", async (req, res) => {
   const { deviceId } = req.params;
