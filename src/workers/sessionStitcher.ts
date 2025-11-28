@@ -601,6 +601,89 @@ async function maybeCloseStale(
   );
 }
 
+/**
+ * Backfill runtime_sessions from equipment_events that have runtime_seconds
+ * but don't have a corresponding runtime_session.
+ * This is useful when events were processed before the fix that handles
+ * events without previous_status.
+ */
+export async function backfillRuntimeSessions(options?: { days?: number }) {
+  const days = options?.days || 30;
+  console.log(`[sessionStitcher] Backfilling runtime sessions for last ${days} days...`);
+
+  const client = await pool.connect();
+  let created = 0;
+  let skipped = 0;
+
+  try {
+    await client.query("BEGIN");
+
+    // Find equipment_events with runtime_seconds that don't have matching runtime_sessions
+    // Use date_trunc to handle timestamp precision differences (microseconds vs milliseconds)
+    const events = await client.query(`
+      SELECT
+        ee.id,
+        ee.device_key,
+        ee.equipment_status,
+        ee.previous_status,
+        ee.runtime_seconds,
+        ee.recorded_at
+      FROM equipment_events ee
+      WHERE ee.runtime_seconds > 0
+        AND ee.recorded_at >= CURRENT_DATE - INTERVAL '${days} days'
+        AND NOT EXISTS (
+          SELECT 1 FROM runtime_sessions rs
+          WHERE rs.device_key = ee.device_key
+            AND rs.terminated_reason = 'posted_runtime'
+            AND date_trunc('second', rs.ended_at) = date_trunc('second', ee.recorded_at)
+            AND rs.runtime_seconds = ee.runtime_seconds
+        )
+      ORDER BY ee.recorded_at ASC
+    `);
+
+    console.log(`[sessionStitcher] Found ${events.rows.length} events to backfill`);
+
+    for (const e of events.rows) {
+      const status = e.previous_status || e.equipment_status;
+
+      if (!status) {
+        console.log(`[sessionStitcher] Skipping event ${e.id}: no status available`);
+        skipped++;
+        continue;
+      }
+
+      const mode = deriveMode(status, null);
+      const ended_at = dayjs.utc(e.recorded_at).toISOString();
+      const started_at = dayjs.utc(e.recorded_at).subtract(e.runtime_seconds, 'second').toISOString();
+
+      await client.query(
+        `INSERT INTO runtime_sessions (
+          device_key, mode, equipment_status, started_at, ended_at,
+          runtime_seconds, tick_count, terminated_reason, created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, 1, 'posted_runtime', NOW(), NOW())`,
+        [e.device_key, mode, status, started_at, ended_at, e.runtime_seconds]
+      );
+
+      console.log(
+        `[sessionStitcher] Created session: device=${e.device_key}, mode=${mode}, ` +
+        `runtime=${e.runtime_seconds}s, ended_at=${ended_at}`
+      );
+      created++;
+    }
+
+    await client.query("COMMIT");
+    console.log(`[sessionStitcher] Backfill complete: ${created} sessions created, ${skipped} skipped`);
+
+    return { ok: true, created, skipped };
+  } catch (err: any) {
+    await client.query("ROLLBACK");
+    console.error("[sessionStitcher] Backfill error:", err.message);
+    return { ok: false, error: err.message };
+  } finally {
+    client.release();
+  }
+}
+
 // Allow manual worker trigger
 if (require.main === module) {
   runSessionStitcher()
