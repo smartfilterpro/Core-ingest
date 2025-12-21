@@ -602,6 +602,131 @@ async function maybeCloseStale(
 }
 
 /**
+ * Recalculates filter_hours_used for a device based on runtime_sessions.
+ * This should be called when use_forced_air_for_heat changes to ensure
+ * the filter hours reflect the correct calculation.
+ *
+ * @param device_key - The device key to recalculate
+ * @returns Object with ok status and recalculated values
+ */
+export async function recalculateFilterHours(device_key: string): Promise<{
+  ok: boolean;
+  previous_filter_hours?: number;
+  new_filter_hours?: number;
+  use_forced_air_for_heat?: boolean;
+  error?: string;
+}> {
+  console.log(`[sessionStitcher] Recalculating filter hours for device: ${device_key}`);
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    // Get device settings
+    const deviceResult = await client.query<{
+      device_id: string;
+      use_forced_air_for_heat: boolean | null;
+      filter_target_hours: number;
+    }>(
+      `SELECT device_id, use_forced_air_for_heat, COALESCE(filter_target_hours, 100) as filter_target_hours
+       FROM devices WHERE device_key = $1`,
+      [device_key]
+    );
+
+    if (deviceResult.rows.length === 0) {
+      await client.query("ROLLBACK");
+      return { ok: false, error: "Device not found" };
+    }
+
+    const device = deviceResult.rows[0];
+
+    // Get device state for last reset timestamp
+    const stateResult = await client.query<{
+      filter_hours_used: number;
+      last_reset_ts: string | null;
+    }>(
+      `SELECT COALESCE(filter_hours_used, 0) as filter_hours_used, last_reset_ts
+       FROM device_states WHERE device_key = $1`,
+      [device_key]
+    );
+
+    if (stateResult.rows.length === 0) {
+      await client.query("ROLLBACK");
+      return { ok: false, error: "Device state not found" };
+    }
+
+    const state = stateResult.rows[0];
+    const previousFilterHours = parseFloat(String(state.filter_hours_used || 0));
+
+    // Query all completed runtime_sessions since last reset
+    // Apply the countsTowardFilter logic based on equipment_status
+    const sessionsResult = await client.query<{
+      equipment_status: string | null;
+      runtime_seconds: number;
+    }>(
+      `SELECT equipment_status, COALESCE(runtime_seconds, 0) as runtime_seconds
+       FROM runtime_sessions
+       WHERE device_key = $1
+         AND ended_at IS NOT NULL
+         ${state.last_reset_ts ? `AND ended_at >= $2` : ""}
+       ORDER BY ended_at ASC`,
+      state.last_reset_ts ? [device_key, state.last_reset_ts] : [device_key]
+    );
+
+    // Calculate filter hours based on current use_forced_air_for_heat setting
+    let newFilterHours = 0;
+    for (const session of sessionsResult.rows) {
+      if (countsTowardFilter(session.equipment_status, device.use_forced_air_for_heat)) {
+        newFilterHours += session.runtime_seconds / 3600.0;
+      }
+    }
+
+    // Calculate filter usage percentage
+    const filterUsagePercent = Math.min(
+      100,
+      Math.round((newFilterHours / device.filter_target_hours) * 100)
+    );
+
+    // Update device_states with recalculated filter hours
+    await client.query(
+      `UPDATE device_states
+       SET filter_hours_used = $1, updated_at = NOW()
+       WHERE device_key = $2`,
+      [newFilterHours, device_key]
+    );
+
+    // Update devices with recalculated filter usage percent
+    await client.query(
+      `UPDATE devices
+       SET filter_usage_percent = $1, updated_at = NOW()
+       WHERE device_key = $2`,
+      [filterUsagePercent, device_key]
+    );
+
+    await client.query("COMMIT");
+
+    console.log(
+      `[sessionStitcher] Recalculated filter hours for ${device_key}: ` +
+      `${previousFilterHours.toFixed(2)}h -> ${newFilterHours.toFixed(2)}h ` +
+      `(use_forced_air_for_heat=${device.use_forced_air_for_heat}, usage=${filterUsagePercent}%)`
+    );
+
+    return {
+      ok: true,
+      previous_filter_hours: previousFilterHours,
+      new_filter_hours: newFilterHours,
+      use_forced_air_for_heat: device.use_forced_air_for_heat ?? false,
+    };
+  } catch (err: any) {
+    await client.query("ROLLBACK");
+    console.error(`[sessionStitcher] Error recalculating filter hours: ${err.message}`);
+    return { ok: false, error: err.message };
+  } finally {
+    client.release();
+  }
+}
+
+/**
  * Backfill runtime_sessions from equipment_events that have runtime_seconds
  * but don't have a corresponding runtime_session.
  * This is useful when events were processed before the fix that handles
