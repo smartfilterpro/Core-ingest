@@ -2,6 +2,7 @@
 import express, { Request, Response } from 'express';
 import { pool } from '../db/pool';
 import { requireAuth } from '../middleware/auth';
+import { recalculateFilterHours } from '../workers/sessionStitcher';
 
 const router = express.Router();
 
@@ -169,15 +170,81 @@ router.patch('/:device_id', requireAuth, async (req: Request, res: Response) => 
       });
     }
 
+    const updatedDevice = rows[0];
     console.log(`[devices/PATCH] Updated device ${device_id}:`, req.body);
+
+    // If use_forced_air_for_heat was updated, recalculate filter hours
+    // This ensures filter_hours_used reflects the correct calculation based on the new setting
+    let recalcResult = null;
+    if (use_forced_air_for_heat !== undefined && updatedDevice.device_key) {
+      console.log(`[devices/PATCH] Recalculating filter hours for device ${updatedDevice.device_key} after use_forced_air_for_heat change`);
+      recalcResult = await recalculateFilterHours(updatedDevice.device_key);
+      if (recalcResult.ok) {
+        console.log(`[devices/PATCH] Filter hours recalculated: ${recalcResult.previous_filter_hours?.toFixed(2)}h -> ${recalcResult.new_filter_hours?.toFixed(2)}h`);
+      } else {
+        console.warn(`[devices/PATCH] Failed to recalculate filter hours: ${recalcResult.error}`);
+      }
+    }
 
     res.json({
       ok: true,
-      device: rows[0],
+      device: updatedDevice,
       updated_fields: Object.keys(req.body),
+      filter_recalculation: recalcResult ? {
+        recalculated: recalcResult.ok,
+        previous_filter_hours: recalcResult.previous_filter_hours,
+        new_filter_hours: recalcResult.new_filter_hours,
+      } : undefined,
     });
   } catch (err: any) {
     console.error('[devices/PATCH] Error:', err.message);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/**
+ * POST /devices/:deviceKey/recalculate-filter
+ * Recalculates filter_hours_used based on runtime_sessions and current use_forced_air_for_heat setting.
+ * Useful when use_forced_air_for_heat was changed or needs to be corrected.
+ */
+router.post('/:deviceKey/recalculate-filter', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { deviceKey } = req.params;
+
+    // Verify device exists
+    const deviceResult = await pool.query(
+      'SELECT device_key, device_id, device_name, use_forced_air_for_heat FROM devices WHERE device_key = $1',
+      [deviceKey]
+    );
+
+    if (deviceResult.rows.length === 0) {
+      return res.status(404).json({ ok: false, error: 'Device not found' });
+    }
+
+    const device = deviceResult.rows[0];
+
+    console.log(`[devices/recalculate-filter] Triggering recalculation for device ${deviceKey} (use_forced_air_for_heat=${device.use_forced_air_for_heat})`);
+
+    const result = await recalculateFilterHours(deviceKey);
+
+    if (!result.ok) {
+      return res.status(500).json({
+        ok: false,
+        error: result.error,
+      });
+    }
+
+    res.json({
+      ok: true,
+      device_key: deviceKey,
+      device_name: device.device_name,
+      use_forced_air_for_heat: device.use_forced_air_for_heat,
+      previous_filter_hours: result.previous_filter_hours,
+      new_filter_hours: result.new_filter_hours,
+      difference_hours: (result.new_filter_hours || 0) - (result.previous_filter_hours || 0),
+    });
+  } catch (err: any) {
+    console.error('[devices/recalculate-filter] Error:', err.message);
     res.status(500).json({ ok: false, error: err.message });
   }
 });

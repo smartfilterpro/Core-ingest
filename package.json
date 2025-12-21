@@ -12,7 +12,7 @@
     "migrate": "ts-node src/runMigrations.ts",
     "worker:session": "ts-node src/workers/sessionStitcher.ts",
     "worker:summary": "ts-node src/workers/summaryWorker.ts",
-"worker:summary:all": "ts-node src/workers/summaryWorker.ts --all",
+    "worker:summary:all": "ts-node src/workers/summaryWorker.ts --all",
     "worker:region": "ts-node src/workers/regionAggregationWorker.ts",
     "worker:ai": "ts-node src/workers/aiWorker.ts",
     "worker:validate": "ts-node src/workers/runRuntimeValidator.ts",
@@ -24,7 +24,6 @@
     "@types/pg": "^8.10.3",
     "axios": "^1.7.2",
     "cors": "^2.8.5",
-    "node-cron": "^3.0.3",
     "dayjs": "^1.11.11",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
@@ -37,12 +36,11 @@
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
-    "@types/node": "^24.7.0",
+    "@types/node": "^24.10.4",
     "@types/node-cron": "^3.0.11",
     "@types/uuid": "^11.0.0",
     "nodemon": "^3.1.4",
     "ts-node": "^10.9.2",
-    "@types/node-cron": "^3.0.11",
     "typescript": "^5.9.3"
   },
   "engines": {
