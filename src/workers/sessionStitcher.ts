@@ -727,6 +727,107 @@ export async function recalculateFilterHours(device_key: string): Promise<{
 }
 
 /**
+ * Recalculates filter_hours_used for ALL devices based on runtime_sessions.
+ * This is useful as a one-time fix when use_forced_air_for_heat settings
+ * were incorrect or when the calculation logic has been updated.
+ *
+ * @returns Object with summary of recalculations
+ */
+export async function recalculateAllFilterHours(): Promise<{
+  ok: boolean;
+  devices_processed: number;
+  devices_updated: number;
+  devices_failed: number;
+  details: Array<{
+    device_key: string;
+    device_name: string | null;
+    use_forced_air_for_heat: boolean;
+    previous_hours: number;
+    new_hours: number;
+    difference: number;
+  }>;
+  errors: Array<{ device_key: string; error: string }>;
+}> {
+  console.log(`[sessionStitcher] Recalculating filter hours for ALL devices...`);
+
+  const details: Array<{
+    device_key: string;
+    device_name: string | null;
+    use_forced_air_for_heat: boolean;
+    previous_hours: number;
+    new_hours: number;
+    difference: number;
+  }> = [];
+  const errors: Array<{ device_key: string; error: string }> = [];
+
+  try {
+    // Get all devices with their device_states
+    const devicesResult = await pool.query<{
+      device_key: string;
+      device_name: string | null;
+    }>(`SELECT device_key, device_name FROM devices ORDER BY device_name`);
+
+    console.log(`[sessionStitcher] Found ${devicesResult.rows.length} devices to process`);
+
+    for (const device of devicesResult.rows) {
+      const result = await recalculateFilterHours(device.device_key);
+
+      if (result.ok) {
+        const difference = (result.new_filter_hours || 0) - (result.previous_filter_hours || 0);
+        details.push({
+          device_key: device.device_key,
+          device_name: device.device_name,
+          use_forced_air_for_heat: result.use_forced_air_for_heat || false,
+          previous_hours: result.previous_filter_hours || 0,
+          new_hours: result.new_filter_hours || 0,
+          difference,
+        });
+
+        if (Math.abs(difference) > 0.01) {
+          console.log(
+            `[sessionStitcher] ${device.device_name || device.device_key}: ` +
+            `${result.previous_filter_hours?.toFixed(2)}h -> ${result.new_filter_hours?.toFixed(2)}h ` +
+            `(${difference > 0 ? '+' : ''}${difference.toFixed(2)}h)`
+          );
+        }
+      } else {
+        errors.push({
+          device_key: device.device_key,
+          error: result.error || 'Unknown error',
+        });
+        console.warn(`[sessionStitcher] Failed for ${device.device_key}: ${result.error}`);
+      }
+    }
+
+    const devicesUpdated = details.filter(d => Math.abs(d.difference) > 0.01).length;
+
+    console.log(
+      `[sessionStitcher] Recalculation complete: ` +
+      `${devicesResult.rows.length} processed, ${devicesUpdated} updated, ${errors.length} failed`
+    );
+
+    return {
+      ok: true,
+      devices_processed: devicesResult.rows.length,
+      devices_updated: devicesUpdated,
+      devices_failed: errors.length,
+      details,
+      errors,
+    };
+  } catch (err: any) {
+    console.error(`[sessionStitcher] Error in recalculateAllFilterHours: ${err.message}`);
+    return {
+      ok: false,
+      devices_processed: 0,
+      devices_updated: 0,
+      devices_failed: 0,
+      details,
+      errors: [{ device_key: 'global', error: err.message }],
+    };
+  }
+}
+
+/**
  * Backfill runtime_sessions from equipment_events that have runtime_seconds
  * but don't have a corresponding runtime_session.
  * This is useful when events were processed before the fix that handles

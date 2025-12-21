@@ -2,7 +2,7 @@
 import express, { Request, Response } from 'express';
 import { pool } from '../db/pool';
 import { requireAuth } from '../middleware/auth';
-import { recalculateFilterHours } from '../workers/sessionStitcher';
+import { recalculateFilterHours, recalculateAllFilterHours } from '../workers/sessionStitcher';
 
 const router = express.Router();
 
@@ -245,6 +245,51 @@ router.post('/:deviceKey/recalculate-filter', requireAuth, async (req: Request, 
     });
   } catch (err: any) {
     console.error('[devices/recalculate-filter] Error:', err.message);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/**
+ * POST /devices/recalculate-all-filters
+ * Recalculates filter_hours_used for ALL devices based on runtime_sessions.
+ * This is useful as a one-time fix when use_forced_air_for_heat settings
+ * were incorrect or when the calculation logic has been updated.
+ */
+router.post('/recalculate-all-filters', requireAuth, async (req: Request, res: Response) => {
+  try {
+    console.log(`[devices/recalculate-all-filters] Triggering recalculation for all devices`);
+
+    const result = await recalculateAllFilterHours();
+
+    if (!result.ok) {
+      return res.status(500).json({
+        ok: false,
+        error: result.errors[0]?.error || 'Unknown error',
+      });
+    }
+
+    // Filter to only show devices that changed
+    const changedDevices = result.details.filter(d => Math.abs(d.difference) > 0.01);
+
+    res.json({
+      ok: true,
+      summary: {
+        devices_processed: result.devices_processed,
+        devices_updated: result.devices_updated,
+        devices_failed: result.devices_failed,
+      },
+      changed_devices: changedDevices.map(d => ({
+        device_key: d.device_key,
+        device_name: d.device_name,
+        use_forced_air_for_heat: d.use_forced_air_for_heat,
+        previous_filter_hours: Math.round(d.previous_hours * 100) / 100,
+        new_filter_hours: Math.round(d.new_hours * 100) / 100,
+        difference_hours: Math.round(d.difference * 100) / 100,
+      })),
+      errors: result.errors,
+    });
+  } catch (err: any) {
+    console.error('[devices/recalculate-all-filters] Error:', err.message);
     res.status(500).json({ ok: false, error: err.message });
   }
 });
