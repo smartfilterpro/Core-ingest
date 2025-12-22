@@ -74,7 +74,7 @@ router.get('/:deviceKey', async (req: Request, res: Response) => {
  * Update device configuration from Bubble
  *
  * Accepts device_id (can be device_key or device_id field)
- * Updates: zip_prefix, filter_target_hours, use_forced_air_for_heat, zip_code_prefix, timezone, user_id
+ * Updates: zip_prefix, filter_target_hours, use_forced_air_for_heat, auto_reset_at_115, zip_code_prefix, timezone, user_id
  */
 router.patch('/:device_id', requireAuth, async (req: Request, res: Response) => {
   try {
@@ -83,6 +83,7 @@ router.patch('/:device_id', requireAuth, async (req: Request, res: Response) => 
       zip_prefix,
       filter_target_hours,
       use_forced_air_for_heat,
+      auto_reset_at_115,
       zip_code_prefix,
       timezone,
       user_id,
@@ -93,13 +94,14 @@ router.patch('/:device_id', requireAuth, async (req: Request, res: Response) => 
       zip_prefix === undefined &&
       filter_target_hours === undefined &&
       use_forced_air_for_heat === undefined &&
+      auto_reset_at_115 === undefined &&
       zip_code_prefix === undefined &&
       timezone === undefined &&
       user_id === undefined
     ) {
       return res.status(400).json({
         ok: false,
-        error: 'At least one field must be provided: zip_prefix, filter_target_hours, use_forced_air_for_heat, zip_code_prefix, timezone, user_id'
+        error: 'At least one field must be provided: zip_prefix, filter_target_hours, use_forced_air_for_heat, auto_reset_at_115, zip_code_prefix, timezone, user_id'
       });
     }
 
@@ -121,6 +123,11 @@ router.patch('/:device_id', requireAuth, async (req: Request, res: Response) => 
     if (use_forced_air_for_heat !== undefined) {
       updates.push(`use_forced_air_for_heat = $${paramIndex++}`);
       values.push(use_forced_air_for_heat);
+    }
+
+    if (auto_reset_at_115 !== undefined) {
+      updates.push(`auto_reset_at_115 = $${paramIndex++}`);
+      values.push(auto_reset_at_115);
     }
 
     if (zip_code_prefix !== undefined) {
@@ -156,6 +163,7 @@ router.patch('/:device_id', requireAuth, async (req: Request, res: Response) => 
         zip_code_prefix,
         filter_target_hours,
         use_forced_air_for_heat,
+        auto_reset_at_115,
         timezone,
         user_id,
         updated_at

@@ -1,5 +1,6 @@
 import express, { Request, Response } from "express";
 import { pool } from "../db/pool";
+import { requireAuth } from "../middleware/auth";
 import axios from "axios";
 
 const router = express.Router();
@@ -7,7 +8,7 @@ const router = express.Router();
 /**
  * Manual or programmatic filter reset endpoint.
  */
-router.post("/", async (req: Request, res: Response) => {
+router.post("/", requireAuth, async (req: Request, res: Response) => {
   const { device_id, user_id, source = "manual" } = req.body;
 
   if (!device_id || !user_id) {

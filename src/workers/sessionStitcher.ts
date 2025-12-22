@@ -230,8 +230,10 @@ async function processRuntimeEvent(
     device_id: string;
     use_forced_air_for_heat: boolean | null;
     filter_target_hours: number;
+    auto_reset_at_115: boolean | null;
   }>(
-    `SELECT device_id, use_forced_air_for_heat, COALESCE(filter_target_hours, 100) as filter_target_hours
+    `SELECT device_id, use_forced_air_for_heat, COALESCE(filter_target_hours, 100) as filter_target_hours,
+            COALESCE(auto_reset_at_115, true) as auto_reset_at_115
      FROM devices WHERE device_key = $1`,
     [device_key]
   );
@@ -302,9 +304,20 @@ async function processRuntimeEvent(
     `usage: ${filter_usage_percent}% [POSTED]`
   );
 
-  // Update state object
+  // Check for auto-reset at 115%
+  // Calculate actual percentage without the 100 cap for comparison
+  const actualPercent = Math.round((newFilterHours / device.filter_target_hours) * 100);
+  if (actualPercent >= 115 && device.auto_reset_at_115 === true) {
+    await performAutoReset(client, device_key, device.device_id);
+    // Update state to reflect reset
+    state.filter_hours_used = 0;
+    state.last_reset_ts = new Date().toISOString();
+  } else {
+    // Update state object
+    state.filter_hours_used = newFilterHours;
+  }
+
   state.hours_used_total = newHours;
-  state.filter_hours_used = newFilterHours;
   state.last_event_ts = recorded_at;
 }
 
@@ -522,8 +535,10 @@ async function maybeCloseStale(
     device_id: string;
     use_forced_air_for_heat: boolean | null;
     filter_target_hours: number;
+    auto_reset_at_115: boolean | null;
   }>(
-    `SELECT device_id, use_forced_air_for_heat, COALESCE(filter_target_hours, 100) as filter_target_hours
+    `SELECT device_id, use_forced_air_for_heat, COALESCE(filter_target_hours, 100) as filter_target_hours,
+            COALESCE(auto_reset_at_115, true) as auto_reset_at_115
      FROM devices WHERE device_key = $1`,
     [device_key]
   );
@@ -599,6 +614,56 @@ async function maybeCloseStale(
     `+${filterHoursToAdd.toFixed(2)}h filter (${shouldCountFilter ? equipment_status : "excluded"}), ` +
     `usage: ${filter_usage_percent}%`
   );
+
+  // Check for auto-reset at 115%
+  // Calculate actual percentage without the 100 cap for comparison
+  const actualPercent = Math.round((newFilterHours / device.filter_target_hours) * 100);
+  if (actualPercent >= 115 && device.auto_reset_at_115 === true) {
+    await performAutoReset(client, device_key, device.device_id);
+  }
+}
+
+/**
+ * Performs an automatic filter reset when usage exceeds 115%.
+ * This assumes the user has received and installed a new filter.
+ *
+ * @param client - Database client (for transaction support)
+ * @param device_key - The device key to reset
+ * @param device_id - The device ID for the filter_resets record
+ */
+async function performAutoReset(
+  client: PoolClient,
+  device_key: string,
+  device_id: string
+): Promise<void> {
+  console.log(`[sessionStitcher] Auto-resetting filter for device ${device_key} (usage >= 115%)`);
+
+  // 1. Insert filter reset record
+  await client.query(
+    `INSERT INTO filter_resets (device_id, user_id, source, triggered_at)
+     VALUES ($1, 'system', 'auto_115', NOW())`,
+    [device_id]
+  );
+
+  // 2. Update device_states to reset filter tracking
+  await client.query(
+    `UPDATE device_states
+     SET last_reset_ts = NOW(),
+         filter_hours_used = 0,
+         updated_at = NOW()
+     WHERE device_key = $1`,
+    [device_key]
+  );
+
+  // 3. Reset filter_usage_percent in devices table
+  await client.query(
+    `UPDATE devices
+     SET filter_usage_percent = 0, updated_at = NOW()
+     WHERE device_key = $1`,
+    [device_key]
+  );
+
+  console.log(`[sessionStitcher] ✅ Auto-reset complete for device ${device_key}`);
 }
 
 /**
