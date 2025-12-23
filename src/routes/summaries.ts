@@ -15,38 +15,41 @@ router.get('/daily', async (req: Request, res: Response) => {
     }
 
     // Build date filter - support 'all' for lifetime data
+    // Use the device's timezone to determine "today" for proper date boundaries
+    // The summaries_daily.date column stores dates in device local time
     const dateFilter = days === 'all'
       ? ''
-      : `AND date >= CURRENT_DATE - INTERVAL '${parseInt(days as string)} days'`;
+      : `AND s.date >= (CURRENT_TIMESTAMP AT TIME ZONE COALESCE(d.timezone, 'UTC'))::DATE - INTERVAL '${parseInt(days as string)} days'`;
 
     const { rows } = await pool.query(
       `
       SELECT
-        device_id,
-        date,
-        runtime_seconds_total,
+        s.device_id,
+        s.date,
+        s.runtime_seconds_total,
         -- HVAC Mode Breakdown (what equipment is DOING)
-        runtime_seconds_heat,
-        runtime_seconds_cool,
-        runtime_seconds_fan,
-        runtime_seconds_auxheat,
-        runtime_seconds_unknown,
+        s.runtime_seconds_heat,
+        s.runtime_seconds_cool,
+        s.runtime_seconds_fan,
+        s.runtime_seconds_auxheat,
+        s.runtime_seconds_unknown,
         -- Operating Mode Distribution (what users SET thermostat to)
-        runtime_seconds_mode_heat,
-        runtime_seconds_mode_cool,
-        runtime_seconds_mode_auto,
-        runtime_seconds_mode_off,
-        runtime_seconds_mode_away,
-        runtime_seconds_mode_eco,
-        runtime_seconds_mode_other,
-        runtime_sessions_count,
-        avg_temperature,
-        avg_humidity,
-        updated_at
-      FROM summaries_daily
-      WHERE device_id = $1
+        s.runtime_seconds_mode_heat,
+        s.runtime_seconds_mode_cool,
+        s.runtime_seconds_mode_auto,
+        s.runtime_seconds_mode_off,
+        s.runtime_seconds_mode_away,
+        s.runtime_seconds_mode_eco,
+        s.runtime_seconds_mode_other,
+        s.runtime_sessions_count,
+        s.avg_temperature,
+        s.avg_humidity,
+        s.updated_at
+      FROM summaries_daily s
+      JOIN devices d ON d.device_id = s.device_id
+      WHERE s.device_id = $1
         ${dateFilter}
-      ORDER BY date DESC
+      ORDER BY s.date DESC
       `,
       [device_id]
     );
@@ -258,6 +261,7 @@ router.get('/filter-status/:deviceKey', async (req: Request, res: Response) => {
 /**
  * GET /summaries/validate
  * Validate summary data completeness and identify date gaps
+ * Uses device timezone for proper date comparisons
  */
 router.get('/validate', async (req: Request, res: Response) => {
   try {
@@ -265,51 +269,67 @@ router.get('/validate', async (req: Request, res: Response) => {
     const daysNum = parseInt(days as string);
 
     // Query 1: Get all dates that SHOULD have summaries (based on runtime_sessions)
+    // Use device timezone to convert started_at to local date (consistent with summary worker)
     const sourceDatesQuery = device_id
       ? `
-        SELECT DISTINCT DATE(started_at) as date, device_key
-        FROM runtime_sessions
-        WHERE device_key = (SELECT device_key FROM devices WHERE device_id = $1)
-          AND started_at >= CURRENT_DATE - INTERVAL '${daysNum} days'
+        SELECT DISTINCT
+          DATE(rs.started_at AT TIME ZONE COALESCE(d.timezone, 'UTC')) as date,
+          rs.device_key
+        FROM runtime_sessions rs
+        JOIN devices d ON d.device_key = rs.device_key
+        WHERE rs.device_key = (SELECT device_key FROM devices WHERE device_id = $1)
+          AND rs.started_at >= CURRENT_TIMESTAMP - INTERVAL '${daysNum} days'
         ORDER BY date DESC
       `
       : `
-        SELECT DISTINCT DATE(started_at) as date, device_key
-        FROM runtime_sessions
-        WHERE started_at >= CURRENT_DATE - INTERVAL '${daysNum} days'
+        SELECT DISTINCT
+          DATE(rs.started_at AT TIME ZONE COALESCE(d.timezone, 'UTC')) as date,
+          rs.device_key
+        FROM runtime_sessions rs
+        JOIN devices d ON d.device_key = rs.device_key
+        WHERE rs.started_at >= CURRENT_TIMESTAMP - INTERVAL '${daysNum} days'
         ORDER BY date DESC
       `;
 
     // Query 2: Get all dates that HAVE summaries
+    // Use device timezone for date filtering
     const summaryDatesQuery = device_id
       ? `
-        SELECT date, device_id
-        FROM summaries_daily
-        WHERE device_id = $1
-          AND date >= CURRENT_DATE - INTERVAL '${daysNum} days'
-        ORDER BY date DESC
+        SELECT s.date, s.device_id
+        FROM summaries_daily s
+        JOIN devices d ON d.device_id = s.device_id
+        WHERE s.device_id = $1
+          AND s.date >= (CURRENT_TIMESTAMP AT TIME ZONE COALESCE(d.timezone, 'UTC'))::DATE - INTERVAL '${daysNum} days'
+        ORDER BY s.date DESC
       `
       : `
-        SELECT date, device_id
-        FROM summaries_daily
-        WHERE date >= CURRENT_DATE - INTERVAL '${daysNum} days'
-        ORDER BY date DESC
+        SELECT s.date, s.device_id
+        FROM summaries_daily s
+        JOIN devices d ON d.device_id = s.device_id
+        WHERE s.date >= (CURRENT_TIMESTAMP AT TIME ZONE COALESCE(d.timezone, 'UTC'))::DATE - INTERVAL '${daysNum} days'
+        ORDER BY s.date DESC
       `;
 
     // Query 3: Find date gaps (dates with source data but no summary)
+    // Use device timezone for consistent date comparisons
     const gapsQuery = device_id
       ? `
         WITH source_dates AS (
-          SELECT DISTINCT DATE(started_at) as date, device_key
-          FROM runtime_sessions
-          WHERE device_key = (SELECT device_key FROM devices WHERE device_id = $1)
-            AND started_at >= CURRENT_DATE - INTERVAL '${daysNum} days'
+          SELECT DISTINCT
+            DATE(rs.started_at AT TIME ZONE COALESCE(d.timezone, 'UTC')) as date,
+            rs.device_key,
+            d.timezone
+          FROM runtime_sessions rs
+          JOIN devices d ON d.device_key = rs.device_key
+          WHERE rs.device_key = (SELECT device_key FROM devices WHERE device_id = $1)
+            AND rs.started_at >= CURRENT_TIMESTAMP - INTERVAL '${daysNum} days'
         ),
         summary_dates AS (
-          SELECT date, device_id
-          FROM summaries_daily
-          WHERE device_id = $1
-            AND date >= CURRENT_DATE - INTERVAL '${daysNum} days'
+          SELECT s.date, s.device_id
+          FROM summaries_daily s
+          JOIN devices d ON d.device_id = s.device_id
+          WHERE s.device_id = $1
+            AND s.date >= (CURRENT_TIMESTAMP AT TIME ZONE COALESCE(d.timezone, 'UTC'))::DATE - INTERVAL '${daysNum} days'
         )
         SELECT
           sd.date,
@@ -326,14 +346,19 @@ router.get('/validate', async (req: Request, res: Response) => {
       `
       : `
         WITH source_dates AS (
-          SELECT DISTINCT DATE(started_at) as date, device_key
-          FROM runtime_sessions
-          WHERE started_at >= CURRENT_DATE - INTERVAL '${daysNum} days'
+          SELECT DISTINCT
+            DATE(rs.started_at AT TIME ZONE COALESCE(d.timezone, 'UTC')) as date,
+            rs.device_key,
+            d.timezone
+          FROM runtime_sessions rs
+          JOIN devices d ON d.device_key = rs.device_key
+          WHERE rs.started_at >= CURRENT_TIMESTAMP - INTERVAL '${daysNum} days'
         ),
         summary_dates AS (
-          SELECT date, device_id
-          FROM summaries_daily
-          WHERE date >= CURRENT_DATE - INTERVAL '${daysNum} days'
+          SELECT s.date, s.device_id
+          FROM summaries_daily s
+          JOIN devices d ON d.device_id = s.device_id
+          WHERE s.date >= (CURRENT_TIMESTAMP AT TIME ZONE COALESCE(d.timezone, 'UTC'))::DATE - INTERVAL '${daysNum} days'
         )
         SELECT
           sd.date,
@@ -351,27 +376,30 @@ router.get('/validate', async (req: Request, res: Response) => {
       `;
 
     // Query 4: Get summary statistics
+    // Use device timezone for date filtering
     const statsQuery = device_id
       ? `
         SELECT
-          COUNT(DISTINCT date) as total_summary_days,
-          MIN(date) as earliest_summary,
-          MAX(date) as latest_summary,
-          MAX(updated_at) as last_updated
-        FROM summaries_daily
-        WHERE device_id = $1
-          AND date >= CURRENT_DATE - INTERVAL '${daysNum} days'
+          COUNT(DISTINCT s.date) as total_summary_days,
+          MIN(s.date) as earliest_summary,
+          MAX(s.date) as latest_summary,
+          MAX(s.updated_at) as last_updated
+        FROM summaries_daily s
+        JOIN devices d ON d.device_id = s.device_id
+        WHERE s.device_id = $1
+          AND s.date >= (CURRENT_TIMESTAMP AT TIME ZONE COALESCE(d.timezone, 'UTC'))::DATE - INTERVAL '${daysNum} days'
       `
       : `
         SELECT
           COUNT(*) as total_summaries,
-          COUNT(DISTINCT date) as total_summary_days,
-          COUNT(DISTINCT device_id) as devices_with_summaries,
-          MIN(date) as earliest_summary,
-          MAX(date) as latest_summary,
-          MAX(updated_at) as last_updated
-        FROM summaries_daily
-        WHERE date >= CURRENT_DATE - INTERVAL '${daysNum} days'
+          COUNT(DISTINCT s.date) as total_summary_days,
+          COUNT(DISTINCT s.device_id) as devices_with_summaries,
+          MIN(s.date) as earliest_summary,
+          MAX(s.date) as latest_summary,
+          MAX(s.updated_at) as last_updated
+        FROM summaries_daily s
+        JOIN devices d ON d.device_id = s.device_id
+        WHERE s.date >= (CURRENT_TIMESTAMP AT TIME ZONE COALESCE(d.timezone, 'UTC'))::DATE - INTERVAL '${daysNum} days'
       `;
 
     const params = device_id ? [device_id] : [];
@@ -438,25 +466,31 @@ router.get('/validate', async (req: Request, res: Response) => {
 /**
  * GET /summaries/dates-present
  * Get a simple list of dates that have summary data (useful for debugging)
+ * Uses device timezone for proper date filtering
  */
 router.get('/dates-present', async (req: Request, res: Response) => {
   try {
     const { device_id, days = 30 } = req.query;
+    const daysNum = parseInt(days as string);
 
+    // Use device timezone for date filtering
+    // The summaries_daily.date column stores dates in device local time
     const query = device_id
       ? `
-        SELECT DISTINCT date
-        FROM summaries_daily
-        WHERE device_id = $1
-          AND date >= CURRENT_DATE - INTERVAL '${parseInt(days as string)} days'
-        ORDER BY date DESC
+        SELECT DISTINCT s.date
+        FROM summaries_daily s
+        JOIN devices d ON d.device_id = s.device_id
+        WHERE s.device_id = $1
+          AND s.date >= (CURRENT_TIMESTAMP AT TIME ZONE COALESCE(d.timezone, 'UTC'))::DATE - INTERVAL '${daysNum} days'
+        ORDER BY s.date DESC
       `
       : `
-        SELECT DISTINCT date, COUNT(*) as device_count
-        FROM summaries_daily
-        WHERE date >= CURRENT_DATE - INTERVAL '${parseInt(days as string)} days'
-        GROUP BY date
-        ORDER BY date DESC
+        SELECT DISTINCT s.date, COUNT(*) as device_count
+        FROM summaries_daily s
+        JOIN devices d ON d.device_id = s.device_id
+        WHERE s.date >= (CURRENT_TIMESTAMP AT TIME ZONE COALESCE(d.timezone, 'UTC'))::DATE - INTERVAL '${daysNum} days'
+        GROUP BY s.date
+        ORDER BY s.date DESC
       `;
 
     const params = device_id ? [device_id] : [];

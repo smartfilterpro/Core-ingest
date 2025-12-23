@@ -7,10 +7,12 @@ const REGION_AGG_LOOKBACK_DAYS = parseInt(process.env.REGION_AGG_LOOKBACK_DAYS |
 /**
  * Aggregates recent summaries by ZIP prefix into region_averages,
  * and syncs results to Bubble (if configured).
+ * Uses device timezone for proper date filtering (dates in summaries_daily are in device local time)
  */
 export async function runRegionAggregationWorker(pool: Pool) {
   console.log('🌎 Starting Region Aggregation Worker...');
 
+  // Use device timezone for date filtering since summaries_daily.date is stored in device local time
   const query = `
     WITH recent AS (
       SELECT
@@ -22,7 +24,7 @@ export async function runRegionAggregationWorker(pool: Pool) {
         COUNT(DISTINCT s.device_id) AS device_count
       FROM summaries_daily s
       JOIN devices d ON d.device_id = s.device_id
-      WHERE s.date >= CURRENT_DATE - INTERVAL '${REGION_AGG_LOOKBACK_DAYS} days'
+      WHERE s.date >= (CURRENT_TIMESTAMP AT TIME ZONE COALESCE(d.timezone, 'UTC'))::DATE - INTERVAL '${REGION_AGG_LOOKBACK_DAYS} days'
         AND d.zip_prefix IS NOT NULL   -- ✅ Skip devices with no ZIP prefix
       GROUP BY d.zip_prefix, s.date
     )
