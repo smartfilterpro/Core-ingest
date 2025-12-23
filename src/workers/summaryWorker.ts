@@ -2,13 +2,15 @@
 import { Pool } from 'pg';
 
 export async function runSummaryWorker(pool: Pool, options?: { fullHistory?: boolean; days?: number }) {
-const mode = options?.fullHistory ? 'ALL HISTORY' : `LAST ${options?.days || 7} DAYS`;
+  const mode = options?.fullHistory ? 'ALL HISTORY' : `LAST ${options?.days || 7} DAYS`;
   console.log(`📊 Starting daily summary worker (${mode})...`);
 
   // Build date filter based on mode
+  // Use CURRENT_TIMESTAMP for consistent timezone handling (includes time component)
+  // This ensures we capture all sessions from the last X days regardless of server timezone
   const dateFilter = options?.fullHistory
     ? '' // No date filter = process all data
-    : `AND rs.started_at >= CURRENT_DATE - INTERVAL '${options?.days || 7} days'`;
+    : `AND rs.started_at >= CURRENT_TIMESTAMP - INTERVAL '${options?.days || 7} days'`;
 
   console.log('📊 Starting daily summary worker (time-based operating mode tracking)...');
   const query = `

@@ -6,10 +6,16 @@ const router = express.Router();
 /**
  * GET /region-averages
  * Get regional averages with optional filters
+ * Note: Dates in region_averages are in device local time (from the source summaries)
  */
 router.get('/', async (req: Request, res: Response) => {
   try {
-    const { region_prefix, days = 7 } = req.query;
+    const { region_prefix, days = 7, timezone } = req.query;
+
+    // Use provided timezone or default to UTC for date filtering
+    // Since region_averages dates are aggregated from device local times,
+    // we use the requesting user's timezone (if provided) to determine "today"
+    const tz = timezone ? String(timezone) : 'UTC';
 
     let query = `
       SELECT
@@ -34,9 +40,11 @@ router.get('/', async (req: Request, res: Response) => {
       paramIndex++;
     }
 
-    // Filter by days lookback
+    // Filter by days lookback - use provided timezone for "today" calculation
     if (days !== 'all') {
-      query += ` AND date >= CURRENT_DATE - INTERVAL '${parseInt(days as string)} days'`;
+      query += ` AND date >= (CURRENT_TIMESTAMP AT TIME ZONE $${paramIndex})::DATE - INTERVAL '${parseInt(days as string)} days'`;
+      params.push(tz);
+      paramIndex++;
     }
 
     query += ` ORDER BY date DESC, region_prefix`;
@@ -57,15 +65,21 @@ router.get('/', async (req: Request, res: Response) => {
 /**
  * GET /region-averages/:regionPrefix
  * Get averages for a specific region
+ * Note: Dates in region_averages are in device local time
  */
 router.get('/:regionPrefix', async (req: Request, res: Response) => {
   try {
     const { regionPrefix } = req.params;
-    const { days = 30 } = req.query;
+    const { days = 30, timezone } = req.query;
+
+    // Use provided timezone or default to UTC for date filtering
+    const tz = timezone ? String(timezone) : 'UTC';
 
     const dateFilter = days === 'all'
       ? ''
-      : `AND date >= CURRENT_DATE - INTERVAL '${parseInt(days as string)} days'`;
+      : `AND date >= (CURRENT_TIMESTAMP AT TIME ZONE $2)::DATE - INTERVAL '${parseInt(days as string)} days'`;
+
+    const params = days === 'all' ? [regionPrefix] : [regionPrefix, tz];
 
     const { rows } = await pool.query(
       `
@@ -83,7 +97,7 @@ router.get('/:regionPrefix', async (req: Request, res: Response) => {
         ${dateFilter}
       ORDER BY date DESC
       `,
-      [regionPrefix]
+      params
     );
 
     if (rows.length === 0) {
@@ -105,15 +119,21 @@ router.get('/:regionPrefix', async (req: Request, res: Response) => {
 /**
  * GET /region-averages/:regionPrefix/summary
  * Get aggregated summary for a specific region
+ * Note: Dates in region_averages are in device local time
  */
 router.get('/:regionPrefix/summary', async (req: Request, res: Response) => {
   try {
     const { regionPrefix } = req.params;
-    const { days = 30 } = req.query;
+    const { days = 30, timezone } = req.query;
+
+    // Use provided timezone or default to UTC for date filtering
+    const tz = timezone ? String(timezone) : 'UTC';
 
     const dateFilter = days === 'all'
       ? ''
-      : `AND date >= CURRENT_DATE - INTERVAL '${parseInt(days as string)} days'`;
+      : `AND date >= (CURRENT_TIMESTAMP AT TIME ZONE $2)::DATE - INTERVAL '${parseInt(days as string)} days'`;
+
+    const params = days === 'all' ? [regionPrefix] : [regionPrefix, tz];
 
     const { rows } = await pool.query(
       `
@@ -134,7 +154,7 @@ router.get('/:regionPrefix/summary', async (req: Request, res: Response) => {
         ${dateFilter}
       GROUP BY region_prefix
       `,
-      [regionPrefix]
+      params
     );
 
     if (rows.length === 0) {
