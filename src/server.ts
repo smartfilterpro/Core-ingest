@@ -22,6 +22,7 @@ import equipmentEventsRouter from "./routes/equipmentEvents";
 import regionAveragesRouter from "./routes/regionAverages";
 import predictionsRouter from "./routes/predictions";
 import runtimeReportRouter from "./routes/runtimeReport";
+import adminDashboardRouter from "./routes/adminDashboard";
 
 // Workers + utilities
 import { runSessionStitcher, runSummaryWorker, runRegionAggregationWorker, bubbleSummarySync, heartbeatWorker, backfillRuntimeSessions } from "./workers/index";
@@ -48,6 +49,7 @@ app.use("/users", usersRouter);
 app.use("/workers/logs", workerLogsRouter);
 app.use("/device-status", deviceStatusRouter);
 app.use("/admin/schema", adminSchemaRouter);
+app.use("/admin", adminDashboardRouter);
 
 // NEW ROUTES - Register them here
 app.use("/devices", devicesRouter);
