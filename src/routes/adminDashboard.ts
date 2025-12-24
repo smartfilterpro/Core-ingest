@@ -684,4 +684,269 @@ router.get('/data-quality', async (_req: Request, res: Response) => {
   }
 });
 
+/**
+ * GET /admin/runtime/reconcile/:deviceId
+ * Compare runtime data from different sources to identify discrepancies
+ * Helps debug differences between filter_hours_used and summaries
+ */
+router.get('/runtime/reconcile/:deviceId', async (req: Request, res: Response) => {
+  try {
+    const { deviceId } = req.params;
+
+    // Get device info and real-time state
+    const deviceResult = await pool.query(`
+      SELECT
+        d.device_id,
+        d.device_key,
+        d.device_name,
+        d.use_forced_air_for_heat,
+        d.filter_target_hours,
+        d.filter_usage_percent,
+        d.timezone,
+        ds.hours_used_total,
+        ds.filter_hours_used,
+        ds.last_reset_ts,
+        ds.last_event_ts
+      FROM devices d
+      LEFT JOIN device_states ds ON ds.device_key = d.device_key
+      WHERE d.device_id = $1
+    `, [deviceId]);
+
+    if (deviceResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Device not found' });
+    }
+
+    const device = deviceResult.rows[0];
+    const lastResetTs = device.last_reset_ts;
+
+    // Get runtime from summaries_daily (since last reset if available)
+    const summariesResult = await pool.query(`
+      SELECT
+        COUNT(*) as days_count,
+        MIN(date) as first_date,
+        MAX(date) as last_date,
+        SUM(runtime_seconds_total) / 3600.0 as total_hours,
+        SUM(runtime_seconds_heat) / 3600.0 as heat_hours,
+        SUM(runtime_seconds_cool) / 3600.0 as cool_hours,
+        SUM(runtime_seconds_fan) / 3600.0 as fan_hours,
+        SUM(runtime_seconds_auxheat) / 3600.0 as auxheat_hours,
+        SUM(runtime_seconds_unknown) / 3600.0 as unknown_hours
+      FROM summaries_daily
+      WHERE device_id = $1
+        ${lastResetTs ? `AND date >= $2::date` : ''}
+    `, lastResetTs ? [deviceId, lastResetTs] : [deviceId]);
+
+    // Get runtime directly from runtime_sessions (since last reset if available)
+    const sessionsResult = await pool.query(`
+      SELECT
+        COUNT(*) as session_count,
+        MIN(started_at) as first_session,
+        MAX(ended_at) as last_session,
+        SUM(runtime_seconds) / 3600.0 as total_hours,
+        SUM(CASE WHEN mode = 'heat' THEN runtime_seconds ELSE 0 END) / 3600.0 as heat_hours,
+        SUM(CASE WHEN mode = 'cool' THEN runtime_seconds ELSE 0 END) / 3600.0 as cool_hours,
+        SUM(CASE WHEN mode = 'fan' THEN runtime_seconds ELSE 0 END) / 3600.0 as fan_hours,
+        SUM(CASE WHEN mode = 'auxheat' THEN runtime_seconds ELSE 0 END) / 3600.0 as auxheat_hours,
+        SUM(CASE WHEN mode NOT IN ('heat', 'cool', 'fan', 'auxheat') OR mode IS NULL THEN runtime_seconds ELSE 0 END) / 3600.0 as unknown_hours
+      FROM runtime_sessions
+      WHERE device_key = $1
+        AND ended_at IS NOT NULL
+        ${lastResetTs ? `AND ended_at >= $2` : ''}
+    `, lastResetTs ? [device.device_key, lastResetTs] : [device.device_key]);
+
+    // Calculate expected filter hours based on sessions and use_forced_air_for_heat
+    const filterCalcResult = await pool.query(`
+      SELECT
+        SUM(
+          CASE
+            WHEN LOWER(equipment_status) LIKE '%cool%' OR LOWER(equipment_status) LIKE '%fan%' THEN runtime_seconds
+            WHEN LOWER(equipment_status) LIKE '%heat%' AND $2 = true THEN runtime_seconds
+            WHEN LOWER(equipment_status) LIKE '%heat%' AND (LOWER(equipment_status) LIKE '%_fan%' OR LOWER(equipment_status) LIKE '%fan') THEN runtime_seconds
+            ELSE 0
+          END
+        ) / 3600.0 as calculated_filter_hours
+      FROM runtime_sessions
+      WHERE device_key = $1
+        AND ended_at IS NOT NULL
+        ${lastResetTs ? `AND ended_at >= $3` : ''}
+    `, lastResetTs
+      ? [device.device_key, device.use_forced_air_for_heat, lastResetTs]
+      : [device.device_key, device.use_forced_air_for_heat]);
+
+    // Check for today's sessions not yet in summaries
+    const todayResult = await pool.query(`
+      SELECT
+        COUNT(*) as session_count,
+        SUM(runtime_seconds) / 3600.0 as total_hours
+      FROM runtime_sessions
+      WHERE device_key = $1
+        AND ended_at IS NOT NULL
+        AND DATE(ended_at AT TIME ZONE COALESCE($2, 'UTC')) = CURRENT_DATE
+    `, [device.device_key, device.timezone]);
+
+    // Check last summary date
+    const lastSummaryResult = await pool.query(`
+      SELECT MAX(date) as last_summary_date
+      FROM summaries_daily
+      WHERE device_id = $1
+    `, [deviceId]);
+
+    // Find days with sessions but no summaries (missing days)
+    const missingDaysQuery = lastResetTs
+      ? `
+        WITH session_dates AS (
+          SELECT DISTINCT DATE(ended_at AT TIME ZONE COALESCE($2, 'UTC')) as date,
+                 SUM(runtime_seconds) / 3600.0 as hours
+          FROM runtime_sessions
+          WHERE device_key = $1
+            AND ended_at IS NOT NULL
+            AND ended_at >= $3
+          GROUP BY DATE(ended_at AT TIME ZONE COALESCE($2, 'UTC'))
+        ),
+        summary_dates AS (
+          SELECT date FROM summaries_daily WHERE device_id = $4
+        )
+        SELECT sd.date, sd.hours
+        FROM session_dates sd
+        LEFT JOIN summary_dates sum ON sum.date = sd.date
+        WHERE sum.date IS NULL
+        ORDER BY sd.date DESC
+        LIMIT 20
+      `
+      : `
+        WITH session_dates AS (
+          SELECT DISTINCT DATE(ended_at AT TIME ZONE COALESCE($2, 'UTC')) as date,
+                 SUM(runtime_seconds) / 3600.0 as hours
+          FROM runtime_sessions
+          WHERE device_key = $1
+            AND ended_at IS NOT NULL
+          GROUP BY DATE(ended_at AT TIME ZONE COALESCE($2, 'UTC'))
+        ),
+        summary_dates AS (
+          SELECT date FROM summaries_daily WHERE device_id = $3
+        )
+        SELECT sd.date, sd.hours
+        FROM session_dates sd
+        LEFT JOIN summary_dates sum ON sum.date = sd.date
+        WHERE sum.date IS NULL
+        ORDER BY sd.date DESC
+        LIMIT 20
+      `;
+
+    const missingDaysResult = await pool.query(
+      missingDaysQuery,
+      lastResetTs
+        ? [device.device_key, device.timezone, lastResetTs, deviceId]
+        : [device.device_key, device.timezone, deviceId]
+    );
+
+    const summaries = summariesResult.rows[0];
+    const sessions = sessionsResult.rows[0];
+    const filterCalc = filterCalcResult.rows[0];
+    const today = todayResult.rows[0];
+    const lastSummary = lastSummaryResult.rows[0];
+    const missingDays = missingDaysResult.rows;
+
+    // Calculate discrepancies
+    const realTimeFilterHours = parseFloat(device.filter_hours_used) || 0;
+    const realTimeTotalHours = parseFloat(device.hours_used_total) || 0;
+    const summaryTotalHours = parseFloat(summaries.total_hours) || 0;
+    const sessionTotalHours = parseFloat(sessions.total_hours) || 0;
+    const calculatedFilterHours = parseFloat(filterCalc.calculated_filter_hours) || 0;
+    const todayHours = parseFloat(today.total_hours) || 0;
+
+    res.json({
+      device: {
+        device_id: device.device_id,
+        device_name: device.device_name,
+        timezone: device.timezone,
+        use_forced_air_for_heat: device.use_forced_air_for_heat,
+        last_reset_ts: device.last_reset_ts,
+        last_event_ts: device.last_event_ts,
+      },
+
+      // Real-time values from device_states (authoritative)
+      real_time: {
+        filter_hours_used: Math.round(realTimeFilterHours * 100) / 100,
+        hours_used_total: Math.round(realTimeTotalHours * 100) / 100,
+        source: 'device_states (updated by sessionStitcher)',
+      },
+
+      // From summaries_daily (may be incomplete)
+      summaries: {
+        total_hours: Math.round(summaryTotalHours * 100) / 100,
+        heat_hours: Math.round(parseFloat(summaries.heat_hours) * 100) / 100,
+        cool_hours: Math.round(parseFloat(summaries.cool_hours) * 100) / 100,
+        fan_hours: Math.round(parseFloat(summaries.fan_hours) * 100) / 100,
+        auxheat_hours: Math.round(parseFloat(summaries.auxheat_hours) * 100) / 100,
+        unknown_hours: Math.round(parseFloat(summaries.unknown_hours) * 100) / 100,
+        days_count: parseInt(summaries.days_count),
+        first_date: summaries.first_date,
+        last_date: summaries.last_date,
+        source: 'summaries_daily (generated by summaryWorker)',
+      },
+
+      // Directly from runtime_sessions
+      sessions: {
+        total_hours: Math.round(sessionTotalHours * 100) / 100,
+        heat_hours: Math.round(parseFloat(sessions.heat_hours) * 100) / 100,
+        cool_hours: Math.round(parseFloat(sessions.cool_hours) * 100) / 100,
+        fan_hours: Math.round(parseFloat(sessions.fan_hours) * 100) / 100,
+        auxheat_hours: Math.round(parseFloat(sessions.auxheat_hours) * 100) / 100,
+        unknown_hours: Math.round(parseFloat(sessions.unknown_hours) * 100) / 100,
+        session_count: parseInt(sessions.session_count),
+        first_session: sessions.first_session,
+        last_session: sessions.last_session,
+        source: 'runtime_sessions (raw session data)',
+      },
+
+      // Filter calculation verification
+      filter_calculation: {
+        calculated_filter_hours: Math.round(calculatedFilterHours * 100) / 100,
+        stored_filter_hours: Math.round(realTimeFilterHours * 100) / 100,
+        difference: Math.round((realTimeFilterHours - calculatedFilterHours) * 100) / 100,
+        note: 'Calculated based on equipment_status and use_forced_air_for_heat setting',
+      },
+
+      // Today's activity
+      today: {
+        sessions_today: parseInt(today.session_count),
+        hours_today: Math.round(todayHours * 100) / 100,
+        last_summary_date: lastSummary.last_summary_date,
+        note: todayHours > 0 && lastSummary.last_summary_date?.toISOString().split('T')[0] !== new Date().toISOString().split('T')[0]
+          ? 'Today\'s runtime may not be in summaries_daily yet'
+          : 'Summaries appear current',
+      },
+
+      // Missing days analysis
+      missing_days: {
+        count: missingDays.length,
+        total_missing_hours: Math.round(missingDays.reduce((sum, d) => sum + (parseFloat(d.hours) || 0), 0) * 100) / 100,
+        dates: missingDays.map(d => ({
+          date: d.date?.toISOString().split('T')[0],
+          hours: Math.round(parseFloat(d.hours) * 100) / 100,
+        })),
+        note: 'Days with runtime_sessions but no summaries_daily entry',
+      },
+
+      // Discrepancy analysis
+      discrepancies: {
+        filter_vs_summaries: Math.round((realTimeFilterHours - summaryTotalHours) * 100) / 100,
+        filter_vs_sessions: Math.round((realTimeFilterHours - sessionTotalHours) * 100) / 100,
+        summaries_vs_sessions: Math.round((summaryTotalHours - sessionTotalHours) * 100) / 100,
+        possible_causes: [
+          ...(missingDays.length > 0 ? [`${missingDays.length} days missing from summaries (${Math.round(missingDays.reduce((sum, d) => sum + (parseFloat(d.hours) || 0), 0) * 100) / 100} hours)`] : []),
+          ...(todayHours > 0 ? [`Today's ${todayHours.toFixed(2)} hours may not be in summaries yet`] : []),
+          ...(Math.abs(realTimeFilterHours - calculatedFilterHours) > 0.1 ? ['Filter hours calculation drift detected'] : []),
+          ...(parseInt(summaries.days_count) === 0 ? ['No summary data found for this device'] : []),
+          ...(parseFloat(sessions.unknown_hours) > 1 ? [`${parseFloat(sessions.unknown_hours).toFixed(2)} hours in unknown mode`] : []),
+        ],
+      },
+    });
+  } catch (err: any) {
+    console.error('[admin/runtime/reconcile] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;
