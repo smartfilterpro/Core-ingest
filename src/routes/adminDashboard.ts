@@ -83,7 +83,7 @@ router.get('/users/top', async (req: Request, res: Response) => {
         MAX(dst.last_seen_at) as last_activity
       FROM devices d
       LEFT JOIN device_states ds ON ds.device_key = d.device_key
-      LEFT JOIN device_status dst ON dst.device_id = d.device_id
+      LEFT JOIN device_status dst ON dst.device_key = d.device_key
       WHERE d.user_id IS NOT NULL
       GROUP BY d.user_id
       ORDER BY ${orderClause}
@@ -134,7 +134,7 @@ router.get('/users/:userId', async (req: Request, res: Response) => {
           dst.is_reachable
         FROM devices d
         LEFT JOIN device_states ds ON ds.device_key = d.device_key
-        LEFT JOIN device_status dst ON dst.device_id = d.device_id
+        LEFT JOIN device_status dst ON dst.device_key = d.device_key
         WHERE d.user_id = $1
         ORDER BY d.created_at DESC
       `, [userId]),
@@ -304,7 +304,7 @@ router.get('/usage/daily', async (req: Request, res: Response) => {
       daily_active AS (
         SELECT
           DATE(last_seen_at) as date,
-          COUNT(DISTINCT device_id) as active_devices
+          COUNT(DISTINCT device_key) as active_devices
         FROM device_status
         WHERE last_seen_at >= CURRENT_DATE - INTERVAL '${days} days'
         GROUP BY DATE(last_seen_at)
@@ -422,6 +422,71 @@ router.get('/filters/health', async (_req: Request, res: Response) => {
     });
   } catch (err: any) {
     console.error('[admin/filters/health] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /admin/filters/due-soon
+ * Get devices with filters predicted to need replacement within specified days
+ */
+router.get('/filters/due-soon', async (req: Request, res: Response) => {
+  try {
+    const days = Math.min(parseInt(req.query.days as string) || 30, 365);
+
+    // Check if ai_predictions table exists
+    const tableCheck = await pool.query(`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables
+        WHERE table_name = 'ai_predictions'
+      ) as exists
+    `);
+
+    if (!tableCheck.rows[0]?.exists) {
+      return res.json({
+        filters: [],
+        total_count: 0,
+      });
+    }
+
+    const { rows } = await pool.query(`
+      SELECT
+        p.device_id,
+        d.device_name,
+        COALESCE(d.user_id, d.workspace_id) as user_id,
+        CAST(p.predicted_usage_percent AS FLOAT) as filter_usage_percent,
+        p.predicted_days_remaining,
+        (CURRENT_DATE + INTERVAL '1 day' * p.predicted_days_remaining) as predicted_change_date,
+        COALESCE(dst.last_seen_at, d.updated_at) as last_activity
+      FROM ai_predictions p
+      JOIN devices d ON p.device_id = d.device_id
+      LEFT JOIN device_status dst ON dst.device_key = d.device_key
+      WHERE p.predicted_days_remaining <= $1
+        AND p.predicted_days_remaining >= 0
+        AND p.created_at = (
+          SELECT MAX(created_at)
+          FROM ai_predictions
+          WHERE device_id = p.device_id
+        )
+      ORDER BY p.predicted_days_remaining ASC
+      LIMIT 100
+    `, [days]);
+
+    res.json({
+      filters: rows.map(row => ({
+        device_id: row.device_id,
+        device_name: row.device_name,
+        user_id: row.user_id,
+        user_email: null, // Email not stored in core-ingest, managed by Bubble
+        filter_usage_percent: Math.round(parseFloat(row.filter_usage_percent || '0') * 100) / 100,
+        predicted_days_remaining: parseInt(row.predicted_days_remaining),
+        predicted_change_date: row.predicted_change_date?.toISOString() || null,
+        last_activity: row.last_activity?.toISOString() || null,
+      })),
+      total_count: rows.length,
+    });
+  } catch (err: any) {
+    console.error('[admin/filters/due-soon] Error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
