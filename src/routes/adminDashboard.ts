@@ -83,7 +83,7 @@ router.get('/users/top', async (req: Request, res: Response) => {
         MAX(dst.last_seen_at) as last_activity
       FROM devices d
       LEFT JOIN device_states ds ON ds.device_key = d.device_key
-      LEFT JOIN device_status dst ON dst.device_id = d.device_id
+      LEFT JOIN device_status dst ON dst.device_key = d.device_key
       WHERE d.user_id IS NOT NULL
       GROUP BY d.user_id
       ORDER BY ${orderClause}
@@ -134,7 +134,7 @@ router.get('/users/:userId', async (req: Request, res: Response) => {
           dst.is_reachable
         FROM devices d
         LEFT JOIN device_states ds ON ds.device_key = d.device_key
-        LEFT JOIN device_status dst ON dst.device_id = d.device_id
+        LEFT JOIN device_status dst ON dst.device_key = d.device_key
         WHERE d.user_id = $1
         ORDER BY d.created_at DESC
       `, [userId]),
@@ -304,7 +304,7 @@ router.get('/usage/daily', async (req: Request, res: Response) => {
       daily_active AS (
         SELECT
           DATE(last_seen_at) as date,
-          COUNT(DISTINCT device_id) as active_devices
+          COUNT(DISTINCT device_key) as active_devices
         FROM device_status
         WHERE last_seen_at >= CURRENT_DATE - INTERVAL '${days} days'
         GROUP BY DATE(last_seen_at)
@@ -460,7 +460,7 @@ router.get('/filters/due-soon', async (req: Request, res: Response) => {
         COALESCE(dst.last_seen_at, d.updated_at) as last_activity
       FROM ai_predictions p
       JOIN devices d ON p.device_id = d.device_id
-      LEFT JOIN device_status dst ON dst.device_id = d.device_id
+      LEFT JOIN device_status dst ON dst.device_key = d.device_key
       WHERE p.predicted_days_remaining <= $1
         AND p.predicted_days_remaining >= 0
         AND p.created_at = (
