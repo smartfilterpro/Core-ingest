@@ -144,7 +144,7 @@ router.get('/users/:userId', async (req: Request, res: Response) => {
         SELECT
           DATE(rs.started_at) as date,
           COUNT(*) as session_count,
-          SUM(rs.duration_seconds) as runtime_seconds
+          SUM(rs.runtime_seconds) as runtime_seconds
         FROM runtime_sessions rs
         JOIN devices d ON d.device_key = rs.device_key
         WHERE d.user_id = $1
@@ -312,7 +312,7 @@ router.get('/usage/daily', async (req: Request, res: Response) => {
       daily_runtime AS (
         SELECT
           DATE(started_at) as date,
-          SUM(duration_seconds) / 3600.0 as total_runtime_hours,
+          SUM(runtime_seconds) / 3600.0 as total_runtime_hours,
           COUNT(DISTINCT device_key) as devices_with_runtime
         FROM runtime_sessions
         WHERE started_at >= CURRENT_DATE - INTERVAL '${days} days'
