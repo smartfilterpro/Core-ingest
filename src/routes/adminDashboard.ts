@@ -791,11 +791,61 @@ router.get('/runtime/reconcile/:deviceId', async (req: Request, res: Response) =
       WHERE device_id = $1
     `, [deviceId]);
 
+    // Find days with sessions but no summaries (missing days)
+    const missingDaysQuery = lastResetTs
+      ? `
+        WITH session_dates AS (
+          SELECT DISTINCT DATE(ended_at AT TIME ZONE COALESCE($2, 'UTC')) as date,
+                 SUM(runtime_seconds) / 3600.0 as hours
+          FROM runtime_sessions
+          WHERE device_key = $1
+            AND ended_at IS NOT NULL
+            AND ended_at >= $3
+          GROUP BY DATE(ended_at AT TIME ZONE COALESCE($2, 'UTC'))
+        ),
+        summary_dates AS (
+          SELECT date FROM summaries_daily WHERE device_id = $4
+        )
+        SELECT sd.date, sd.hours
+        FROM session_dates sd
+        LEFT JOIN summary_dates sum ON sum.date = sd.date
+        WHERE sum.date IS NULL
+        ORDER BY sd.date DESC
+        LIMIT 20
+      `
+      : `
+        WITH session_dates AS (
+          SELECT DISTINCT DATE(ended_at AT TIME ZONE COALESCE($2, 'UTC')) as date,
+                 SUM(runtime_seconds) / 3600.0 as hours
+          FROM runtime_sessions
+          WHERE device_key = $1
+            AND ended_at IS NOT NULL
+          GROUP BY DATE(ended_at AT TIME ZONE COALESCE($2, 'UTC'))
+        ),
+        summary_dates AS (
+          SELECT date FROM summaries_daily WHERE device_id = $3
+        )
+        SELECT sd.date, sd.hours
+        FROM session_dates sd
+        LEFT JOIN summary_dates sum ON sum.date = sd.date
+        WHERE sum.date IS NULL
+        ORDER BY sd.date DESC
+        LIMIT 20
+      `;
+
+    const missingDaysResult = await pool.query(
+      missingDaysQuery,
+      lastResetTs
+        ? [device.device_key, device.timezone, lastResetTs, deviceId]
+        : [device.device_key, device.timezone, deviceId]
+    );
+
     const summaries = summariesResult.rows[0];
     const sessions = sessionsResult.rows[0];
     const filterCalc = filterCalcResult.rows[0];
     const today = todayResult.rows[0];
     const lastSummary = lastSummaryResult.rows[0];
+    const missingDays = missingDaysResult.rows;
 
     // Calculate discrepancies
     const realTimeFilterHours = parseFloat(device.filter_hours_used) || 0;
@@ -868,12 +918,24 @@ router.get('/runtime/reconcile/:deviceId', async (req: Request, res: Response) =
           : 'Summaries appear current',
       },
 
+      // Missing days analysis
+      missing_days: {
+        count: missingDays.length,
+        total_missing_hours: Math.round(missingDays.reduce((sum, d) => sum + (parseFloat(d.hours) || 0), 0) * 100) / 100,
+        dates: missingDays.map(d => ({
+          date: d.date?.toISOString().split('T')[0],
+          hours: Math.round(parseFloat(d.hours) * 100) / 100,
+        })),
+        note: 'Days with runtime_sessions but no summaries_daily entry',
+      },
+
       // Discrepancy analysis
       discrepancies: {
         filter_vs_summaries: Math.round((realTimeFilterHours - summaryTotalHours) * 100) / 100,
         filter_vs_sessions: Math.round((realTimeFilterHours - sessionTotalHours) * 100) / 100,
         summaries_vs_sessions: Math.round((summaryTotalHours - sessionTotalHours) * 100) / 100,
         possible_causes: [
+          ...(missingDays.length > 0 ? [`${missingDays.length} days missing from summaries (${Math.round(missingDays.reduce((sum, d) => sum + (parseFloat(d.hours) || 0), 0) * 100) / 100} hours)`] : []),
           ...(todayHours > 0 ? [`Today's ${todayHours.toFixed(2)} hours may not be in summaries yet`] : []),
           ...(Math.abs(realTimeFilterHours - calculatedFilterHours) > 0.1 ? ['Filter hours calculation drift detected'] : []),
           ...(parseInt(summaries.days_count) === 0 ? ['No summary data found for this device'] : []),
