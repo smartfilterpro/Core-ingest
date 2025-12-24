@@ -304,7 +304,7 @@ Filter lifecycle status across all devices.
 
 #### `GET /admin/hvac/trends`
 
-HVAC equipment mode usage over time.
+HVAC equipment mode usage over time, broken down by operating mode.
 
 **Query Parameters:**
 | Parameter | Type | Default | Description |
@@ -320,12 +320,26 @@ HVAC equipment mode usage over time.
       "heat_hours": 850.5,
       "cool_hours": 120.25,
       "fan_hours": 45.0,
-      "off_hours": 200.0
+      "auxheat_hours": 25.0,
+      "unknown_hours": 5.0,
+      "total_hours": 1045.75
     }
   ],
   "period_days": 30
 }
 ```
+
+**Mode Definitions:**
+| Mode | Description |
+|------|-------------|
+| `heat_hours` | Standard heating runtime |
+| `cool_hours` | Cooling/AC runtime |
+| `fan_hours` | Fan-only circulation |
+| `auxheat_hours` | Auxiliary/emergency heat (typically electric backup) |
+| `unknown_hours` | Sessions with unrecognized mode (data quality indicator) |
+| `total_hours` | Sum of all modes (`heat + cool + fan + auxheat + unknown`) |
+
+**Note:** If `unknown_hours` is high, it may indicate equipment status values that need to be mapped to recognized modes.
 
 **Suggested UI:** Stacked area chart showing seasonal heating/cooling patterns.
 
@@ -522,7 +536,9 @@ interface HvacDay {
   heat_hours: number;
   cool_hours: number;
   fan_hours: number;
-  off_hours: number;
+  auxheat_hours: number;
+  unknown_hours: number;
+  total_hours: number;
 }
 
 // GET /admin/workers/health

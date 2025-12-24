@@ -494,6 +494,13 @@ router.get('/filters/due-soon', async (req: Request, res: Response) => {
 /**
  * GET /admin/hvac/trends
  * Get HVAC mode distribution trends
+ *
+ * Mode breakdown from runtime_sessions:
+ * - heat_hours: Heating runtime
+ * - cool_hours: Cooling runtime
+ * - fan_hours: Fan-only runtime
+ * - auxheat_hours: Auxiliary/emergency heat runtime
+ * - unknown_hours: Sessions with unrecognized mode (data quality indicator)
  */
 router.get('/hvac/trends', async (req: Request, res: Response) => {
   try {
@@ -512,9 +519,9 @@ router.get('/hvac/trends', async (req: Request, res: Response) => {
         COALESCE(SUM(sd.runtime_seconds_heat), 0) / 3600.0 as heat_hours,
         COALESCE(SUM(sd.runtime_seconds_cool), 0) / 3600.0 as cool_hours,
         COALESCE(SUM(sd.runtime_seconds_fan), 0) / 3600.0 as fan_hours,
-        COALESCE(24 * COUNT(DISTINCT sd.device_id) - (
-          SUM(sd.runtime_seconds_heat) + SUM(sd.runtime_seconds_cool) + SUM(sd.runtime_seconds_fan)
-        ) / 3600.0, 0) as off_hours
+        COALESCE(SUM(sd.runtime_seconds_auxheat), 0) / 3600.0 as auxheat_hours,
+        COALESCE(SUM(sd.runtime_seconds_unknown), 0) / 3600.0 as unknown_hours,
+        COALESCE(SUM(sd.runtime_seconds_total), 0) / 3600.0 as total_hours
       FROM date_series ds
       LEFT JOIN summaries_daily sd ON sd.date = ds.date
       GROUP BY ds.date
@@ -527,7 +534,9 @@ router.get('/hvac/trends', async (req: Request, res: Response) => {
         heat_hours: Math.max(0, Math.round(parseFloat(row.heat_hours) * 100) / 100),
         cool_hours: Math.max(0, Math.round(parseFloat(row.cool_hours) * 100) / 100),
         fan_hours: Math.max(0, Math.round(parseFloat(row.fan_hours) * 100) / 100),
-        off_hours: Math.max(0, Math.round(parseFloat(row.off_hours) * 100) / 100),
+        auxheat_hours: Math.max(0, Math.round(parseFloat(row.auxheat_hours) * 100) / 100),
+        unknown_hours: Math.max(0, Math.round(parseFloat(row.unknown_hours) * 100) / 100),
+        total_hours: Math.max(0, Math.round(parseFloat(row.total_hours) * 100) / 100),
       })),
       period_days: days,
     });
