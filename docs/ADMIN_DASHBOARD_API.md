@@ -22,7 +22,7 @@ The token can be either:
 
 **Unauthorized requests return:**
 ```json
-{ "ok": false, "error": "Unauthorized: missing core_token" }
+{ "error": "Unauthorized: missing core_token" }
 ```
 
 ---
@@ -38,24 +38,13 @@ High-level platform statistics for dashboard header cards.
 **Response:**
 ```json
 {
-  "ok": true,
-  "stats": {
-    "users": {
-      "total": 150
-    },
-    "devices": {
-      "total": 320,
-      "active_24h": 280,
-      "active_7d": 310,
-      "avg_per_user": 2.13
-    },
-    "activity": {
-      "events_last_30d": 1200000,
-      "sessions_last_30d": 45000,
-      "runtime_hours_last_30d": 12500
-    }
-  },
-  "generated_at": "2024-01-15T10:30:00.000Z"
+  "total_users": 150,
+  "total_devices": 320,
+  "active_devices_24h": 280,
+  "total_runtime_hours": 12500.5,
+  "avg_runtime_per_device": 39.06,
+  "devices_with_predictions": 250,
+  "updated_at": "2024-01-15T10:30:00.000Z"
 }
 ```
 
@@ -78,19 +67,14 @@ Ranked list of users by engagement metrics.
 **Response:**
 ```json
 {
-  "ok": true,
-  "count": 20,
-  "sort_by": "device_count",
   "users": [
     {
       "user_id": "user_abc123",
+      "email": null,
       "device_count": 5,
       "total_runtime_hours": 1250.5,
       "last_activity": "2024-01-15T08:30:00.000Z",
-      "primary_thermostat_type": "ecobee",
-      "thermostat_types_count": 2,
-      "thermostat_types": ["ecobee", "nest"],
-      "filter_resets_count": 12
+      "subscription_status": true
     }
   ]
 }
@@ -161,40 +145,19 @@ Device breakdown by thermostat brand/platform.
 **Response:**
 ```json
 {
-  "ok": true,
-  "total_devices": 320,
-  "distribution": [
+  "sources": [
     {
       "source": "ecobee",
-      "device_count": 150,
-      "user_count": 80,
+      "count": 150,
       "percentage": 46.88
     },
     {
       "source": "nest",
-      "device_count": 100,
-      "user_count": 60,
+      "count": 100,
       "percentage": 31.25
-    },
-    {
-      "source": "resideo",
-      "device_count": 40,
-      "user_count": 25,
-      "percentage": 12.5
-    },
-    {
-      "source": "smartthings",
-      "device_count": 20,
-      "user_count": 15,
-      "percentage": 6.25
-    },
-    {
-      "source": "hubitat",
-      "device_count": 10,
-      "user_count": 8,
-      "percentage": 3.12
     }
-  ]
+  ],
+  "total": 320
 }
 ```
 
@@ -206,40 +169,28 @@ Device breakdown by thermostat brand/platform.
 
 #### `GET /admin/devices/by-manufacturer`
 
-Device distribution by hardware manufacturer and model.
+Device distribution by hardware manufacturer.
 
 **Response:**
 ```json
 {
-  "ok": true,
   "manufacturers": [
     {
       "manufacturer": "ecobee",
-      "device_count": 150,
+      "count": 150,
       "percentage": 46.88
     },
     {
       "manufacturer": "Google",
-      "device_count": 100,
+      "count": 100,
       "percentage": 31.25
     }
   ],
-  "top_models": [
-    {
-      "manufacturer": "ecobee",
-      "model": "SmartThermostat Premium",
-      "device_count": 80
-    },
-    {
-      "manufacturer": "Google",
-      "model": "Nest Learning Thermostat",
-      "device_count": 60
-    }
-  ]
+  "total": 320
 }
 ```
 
-**Suggested UI:** Horizontal bar chart for manufacturers, table for top models.
+**Suggested UI:** Horizontal bar chart for manufacturers.
 
 ---
 
@@ -300,28 +251,23 @@ Time-series data for platform activity.
 **Response:**
 ```json
 {
-  "ok": true,
-  "days": 30,
-  "trends": [
+  "data": [
     {
       "date": "2024-01-15",
-      "events": 45000,
-      "devices_with_events": 280,
-      "sessions": 1500,
-      "runtime_hours": 425.5,
-      "devices_with_sessions": 275,
-      "active_devices": 290
+      "active_devices": 290,
+      "total_runtime_hours": 425.5,
+      "avg_runtime_per_device": 1.47,
+      "new_users": 5
     },
     {
       "date": "2024-01-14",
-      "events": 42000,
-      "devices_with_events": 275,
-      "sessions": 1450,
-      "runtime_hours": 410.25,
-      "devices_with_sessions": 270,
-      "active_devices": 285
+      "active_devices": 285,
+      "total_runtime_hours": 410.25,
+      "avg_runtime_per_device": 1.44,
+      "new_users": 3
     }
-  ]
+  ],
+  "period_days": 30
 }
 ```
 
@@ -338,33 +284,19 @@ Filter lifecycle status across all devices.
 **Response:**
 ```json
 {
-  "ok": true,
-  "filter_status_distribution": [
-    { "status": "overdue (100%+)", "device_count": 15 },
-    { "status": "needs_attention (80-99%)", "device_count": 35 },
-    { "status": "moderate (50-79%)", "device_count": 80 },
-    { "status": "good (20-49%)", "device_count": 120 },
-    { "status": "fresh (0-19%)", "device_count": 70 }
+  "categories": [
+    { "category": "Good (0-50%)", "count": 200, "percentage": 62.5 },
+    { "category": "Warning (50-80%)", "count": 80, "percentage": 25 },
+    { "category": "Critical (80%+)", "count": 40, "percentage": 12.5 }
   ],
-  "reset_trends": [
-    {
-      "date": "2024-01-15",
-      "manual_resets": 5,
-      "automatic_resets": 2,
-      "total_resets": 7
-    }
-  ],
-  "auto_reset_settings": [
-    { "auto_reset_enabled": true, "device_count": 180 },
-    { "auto_reset_enabled": false, "device_count": 140 }
-  ]
+  "total_devices": 320,
+  "avg_filter_usage": 42.5
 }
 ```
 
 **Suggested UI:**
 - Stacked bar chart or pie chart for filter status distribution
-- Line chart for reset trends
-- Simple stat comparing auto-reset enabled vs disabled
+- Display average filter usage as a gauge
 
 ---
 
@@ -372,7 +304,7 @@ Filter lifecycle status across all devices.
 
 #### `GET /admin/hvac/trends`
 
-HVAC equipment and thermostat mode usage over time.
+HVAC equipment mode usage over time.
 
 **Query Parameters:**
 | Parameter | Type | Default | Description |
@@ -382,26 +314,16 @@ HVAC equipment and thermostat mode usage over time.
 **Response:**
 ```json
 {
-  "ok": true,
-  "days": 30,
-  "trends": [
+  "data": [
     {
       "date": "2024-01-15",
-      "device_count": 280,
-      "hvac_mode_hours": {
-        "heat": 850.5,
-        "cool": 120.25,
-        "fan": 45.0,
-        "auxheat": 25.5
-      },
-      "thermostat_mode_hours": {
-        "heat": 900.0,
-        "cool": 50.0,
-        "auto": 200.5,
-        "eco": 80.25
-      }
+      "heat_hours": 850.5,
+      "cool_hours": 120.25,
+      "fan_hours": 45.0,
+      "off_hours": 200.0
     }
-  ]
+  ],
+  "period_days": 30
 }
 ```
 
@@ -418,47 +340,27 @@ Background worker execution statistics.
 **Response:**
 ```json
 {
-  "ok": true,
-  "success_rates": [
+  "workers": [
     {
-      "worker": "sessionStitcher",
-      "total_runs": 168,
-      "successful_runs": 165,
-      "success_rate_percent": 98.21,
-      "avg_duration_seconds": 45
+      "worker_name": "sessionStitcher",
+      "status": "healthy",
+      "last_heartbeat": "2024-01-15T10:00:00.000Z",
+      "processed_count": 5000,
+      "error_rate": 1.5
     },
     {
-      "worker": "summaryWorker",
-      "total_runs": 7,
-      "successful_runs": 7,
-      "success_rate_percent": 100.0,
-      "avg_duration_seconds": 120
+      "worker_name": "summaryWorker",
+      "status": "healthy",
+      "last_heartbeat": "2024-01-15T09:00:00.000Z",
+      "processed_count": 320,
+      "error_rate": 0
     }
   ],
-  "last_successful_runs": [
-    {
-      "worker": "sessionStitcher",
-      "last_run": "2024-01-15T10:00:00.000Z",
-      "duration_seconds": 42,
-      "devices_processed": 320,
-      "success_count": 320,
-      "fail_count": 0
-    }
-  ],
-  "recent_runs": [
-    {
-      "worker": "sessionStitcher",
-      "status": "completed",
-      "success": true,
-      "duration_seconds": 42,
-      "devices_processed": 320,
-      "created_at": "2024-01-15T10:00:00.000Z"
-    }
-  ]
+  "overall_status": "healthy"
 }
 ```
 
-**Suggested UI:** Status cards per worker with success rate gauges, plus a recent runs log table.
+**Suggested UI:** Status cards per worker with health indicators and overall system status.
 
 ---
 
@@ -471,34 +373,25 @@ Data validation and coverage metrics.
 **Response:**
 ```json
 {
-  "ok": true,
-  "validation": {
-    "total_validated_days": 5000,
-    "corrected_days": 150,
-    "avg_discrepancy_seconds": 45,
-    "correction_rate_percent": 3
+  "coverage": {
+    "devices_with_data": 280,
+    "total_devices": 320,
+    "percentage": 87.5
   },
-  "daily_coverage": [
-    {
-      "date": "2024-01-15",
-      "devices_with_summaries": 280,
-      "total_devices": 320,
-      "coverage_percent": 87.5
-    }
-  ],
-  "devices_with_discrepancies": [
-    {
-      "device_id": "dev_123",
-      "device_name": "Living Room",
-      "connection_source": "ecobee",
-      "days_with_discrepancy": 5,
-      "avg_discrepancy_minutes": 8
-    }
-  ]
+  "freshness": {
+    "updated_last_hour": 150,
+    "updated_last_day": 280,
+    "stale_devices": 40
+  },
+  "completeness": {
+    "with_predictions": 250,
+    "with_summaries": 280,
+    "with_region_data": 200
+  }
 }
 ```
 
-**Suggested UI:** Coverage percentage gauge, line chart for daily coverage, and table for devices with issues.
+**Suggested UI:** Coverage percentage gauge, freshness indicators, and completeness breakdown.
 
 ---
 
@@ -557,10 +450,9 @@ Data validation and coverage metrics.
 
 ### Error Handling
 
-All endpoints return consistent error format:
+All endpoints return consistent error format on failure:
 ```json
 {
-  "ok": false,
   "error": "Error message here"
 }
 ```
@@ -573,81 +465,92 @@ Handle these HTTP status codes:
 ### TypeScript Types
 
 ```typescript
+// GET /admin/stats/overview
 interface AdminStatsOverview {
-  ok: boolean;
-  stats: {
-    users: { total: number };
-    devices: {
-      total: number;
-      active_24h: number;
-      active_7d: number;
-      avg_per_user: number;
-    };
-    activity: {
-      events_last_30d: number;
-      sessions_last_30d: number;
-      runtime_hours_last_30d: number;
-    };
-  };
-  generated_at: string;
+  total_users: number;
+  total_devices: number;
+  active_devices_24h: number;
+  total_runtime_hours: number;
+  avg_runtime_per_device: number;
+  devices_with_predictions: number;
+  updated_at: string;
 }
 
+// GET /admin/users/top
 interface TopUser {
   user_id: string;
+  email: string | null;
   device_count: number;
   total_runtime_hours: number;
   last_activity: string | null;
-  primary_thermostat_type: string | null;
-  thermostat_types_count: number;
-  thermostat_types: string[];
-  filter_resets_count: number;
+  subscription_status: boolean;
 }
 
-interface DeviceDistribution {
+// GET /admin/devices/by-source
+interface DeviceSource {
   source: string;
-  device_count: number;
-  user_count: number;
+  count: number;
   percentage: number;
 }
 
-interface DailyTrend {
+// GET /admin/devices/by-manufacturer
+interface ManufacturerData {
+  manufacturer: string;
+  count: number;
+  percentage: number;
+}
+
+// GET /admin/usage/daily
+interface DailyUsage {
   date: string;
-  events: number;
-  devices_with_events: number;
-  sessions: number;
-  runtime_hours: number;
-  devices_with_sessions: number;
   active_devices: number;
+  total_runtime_hours: number;
+  avg_runtime_per_device: number;
+  new_users: number;
 }
 
-interface FilterStatusBucket {
-  status: string;
-  device_count: number;
+// GET /admin/filters/health
+interface FilterCategory {
+  category: string;
+  count: number;
+  percentage: number;
 }
 
-interface HvacTrend {
+// GET /admin/hvac/trends
+interface HvacDay {
   date: string;
-  device_count: number;
-  hvac_mode_hours: {
-    heat: number;
-    cool: number;
-    fan: number;
-    auxheat: number;
-  };
-  thermostat_mode_hours: {
-    heat: number;
-    cool: number;
-    auto: number;
-    eco: number;
-  };
+  heat_hours: number;
+  cool_hours: number;
+  fan_hours: number;
+  off_hours: number;
 }
 
-interface WorkerSuccessRate {
-  worker: string;
-  total_runs: number;
-  successful_runs: number;
-  success_rate_percent: number;
-  avg_duration_seconds: number;
+// GET /admin/workers/health
+interface WorkerStatus {
+  worker_name: string;
+  status: 'healthy' | 'degraded' | 'down';
+  last_heartbeat: string | null;
+  processed_count: number;
+  error_rate: number;
+}
+
+// GET /admin/data-quality
+interface DataQuality {
+  coverage: {
+    devices_with_data: number;
+    total_devices: number;
+    percentage: number;
+  };
+  freshness: {
+    updated_last_hour: number;
+    updated_last_day: number;
+    stale_devices: number;
+  };
+  completeness: {
+    with_predictions: number;
+    with_summaries: number;
+    with_region_data: number;
+  };
 }
 ```
 
