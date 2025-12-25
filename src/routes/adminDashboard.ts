@@ -537,6 +537,8 @@ router.get('/hvac/trends', async (req: Request, res: Response) => {
         auxheat_hours: Math.max(0, Math.round(parseFloat(row.auxheat_hours) * 100) / 100),
         unknown_hours: Math.max(0, Math.round(parseFloat(row.unknown_hours) * 100) / 100),
         total_hours: Math.max(0, Math.round(parseFloat(row.total_hours) * 100) / 100),
+        // Backwards compatibility - deprecated, use total_hours instead
+        off_hours: 0,
       })),
       period_days: days,
     });
