@@ -82,11 +82,12 @@ export async function runSummaryWorker(pool: Pool, options?: { fullHistory?: boo
       GROUP BY ee.device_key, DATE(ee.recorded_at AT TIME ZONE COALESCE(d.timezone, 'UTC'))
     ),
     equipment_runtime_daily AS (
-      -- Keep existing HVAC equipment runtime calculation (using device's local timezone)
-      -- FIX: Use single AT TIME ZONE for timestamptz columns to correctly convert to local time
-      -- Double AT TIME ZONE was incorrectly interpreting UTC values as local time
+      -- HVAC equipment runtime calculation (using device's local timezone)
+      -- This is now the PRIMARY driver for dates - ensures all runtime_sessions are captured
+      -- even if no equipment_events exist for that date
       SELECT
         rs.device_key,
+        d.device_id,
         DATE(COALESCE(rs.ended_at, rs.started_at) AT TIME ZONE COALESCE(d.timezone, 'UTC')) as date,
         SUM(COALESCE(rs.runtime_seconds, 0))::INT as runtime_seconds_total,
         SUM(CASE WHEN rs.mode = 'heat' THEN COALESCE(rs.runtime_seconds, 0) ELSE 0 END)::INT as runtime_seconds_heat,
@@ -98,38 +99,40 @@ export async function runSummaryWorker(pool: Pool, options?: { fullHistory?: boo
       FROM runtime_sessions rs
       INNER JOIN devices d ON d.device_key = rs.device_key
       WHERE rs.ended_at IS NOT NULL
+        AND d.device_id IS NOT NULL
         ${dateFilter.replace('rs.started_at', 'rs.ended_at')}
-      GROUP BY rs.device_key, DATE(COALESCE(rs.ended_at, rs.started_at) AT TIME ZONE COALESCE(d.timezone, 'UTC'))
+      GROUP BY rs.device_key, d.device_id, DATE(COALESCE(rs.ended_at, rs.started_at) AT TIME ZONE COALESCE(d.timezone, 'UTC'))
     ),
     daily AS (
+      -- Use runtime_sessions (equipment_runtime_daily) as the PRIMARY driver
+      -- LEFT JOIN to equipment_events for temperature/humidity data (optional)
+      -- This ensures ALL runtime is captured even without equipment_events
       SELECT
-        d.device_id,
-        aed.date as date,
+        erd.device_id,
+        erd.date as date,
         -- HVAC Mode Breakdown (what equipment was DOING - from runtime_sessions)
-        COALESCE(erd.runtime_seconds_total, 0)::INT as runtime_seconds_total,
-        COALESCE(erd.runtime_seconds_heat, 0)::INT as runtime_seconds_heat,
-        COALESCE(erd.runtime_seconds_cool, 0)::INT as runtime_seconds_cool,
-        COALESCE(erd.runtime_seconds_fan, 0)::INT as runtime_seconds_fan,
-        COALESCE(erd.runtime_seconds_auxheat, 0)::INT as runtime_seconds_auxheat,
-        COALESCE(erd.runtime_seconds_unknown, 0)::INT as runtime_seconds_unknown,
+        erd.runtime_seconds_total::INT as runtime_seconds_total,
+        erd.runtime_seconds_heat::INT as runtime_seconds_heat,
+        erd.runtime_seconds_cool::INT as runtime_seconds_cool,
+        erd.runtime_seconds_fan::INT as runtime_seconds_fan,
+        erd.runtime_seconds_auxheat::INT as runtime_seconds_auxheat,
+        erd.runtime_seconds_unknown::INT as runtime_seconds_unknown,
         -- Operating Mode Distribution (what user SET thermostat to - from equipment_events)
-        SUM(CASE WHEN tmd.thermostat_mode = 'heat' THEN COALESCE(tmd.mode_duration_seconds, 0) ELSE 0 END)::INT as runtime_seconds_mode_heat,
-        SUM(CASE WHEN tmd.thermostat_mode = 'cool' THEN COALESCE(tmd.mode_duration_seconds, 0) ELSE 0 END)::INT as runtime_seconds_mode_cool,
-        SUM(CASE WHEN tmd.thermostat_mode IN ('auto', 'heat-cool') THEN COALESCE(tmd.mode_duration_seconds, 0) ELSE 0 END)::INT as runtime_seconds_mode_auto,
-        SUM(CASE WHEN tmd.thermostat_mode = 'off' THEN COALESCE(tmd.mode_duration_seconds, 0) ELSE 0 END)::INT as runtime_seconds_mode_off,
-        SUM(CASE WHEN tmd.thermostat_mode IN ('away', 'vacation') THEN COALESCE(tmd.mode_duration_seconds, 0) ELSE 0 END)::INT as runtime_seconds_mode_away,
-        SUM(CASE WHEN tmd.thermostat_mode IN ('eco', 'energy_saver') THEN COALESCE(tmd.mode_duration_seconds, 0) ELSE 0 END)::INT as runtime_seconds_mode_eco,
-        SUM(CASE WHEN tmd.thermostat_mode NOT IN ('heat', 'cool', 'auto', 'heat-cool', 'off', 'away', 'vacation', 'eco', 'energy_saver') AND tmd.thermostat_mode IS NOT NULL THEN COALESCE(tmd.mode_duration_seconds, 0) ELSE 0 END)::INT as runtime_seconds_mode_other,
-        COALESCE(erd.runtime_sessions_count, 0)::INT as runtime_sessions_count,
-        -- Use all_event_dates for temperature/humidity (already filtered for valid temps)
+        COALESCE(SUM(CASE WHEN tmd.thermostat_mode = 'heat' THEN tmd.mode_duration_seconds ELSE 0 END), 0)::INT as runtime_seconds_mode_heat,
+        COALESCE(SUM(CASE WHEN tmd.thermostat_mode = 'cool' THEN tmd.mode_duration_seconds ELSE 0 END), 0)::INT as runtime_seconds_mode_cool,
+        COALESCE(SUM(CASE WHEN tmd.thermostat_mode IN ('auto', 'heat-cool') THEN tmd.mode_duration_seconds ELSE 0 END), 0)::INT as runtime_seconds_mode_auto,
+        COALESCE(SUM(CASE WHEN tmd.thermostat_mode = 'off' THEN tmd.mode_duration_seconds ELSE 0 END), 0)::INT as runtime_seconds_mode_off,
+        COALESCE(SUM(CASE WHEN tmd.thermostat_mode IN ('away', 'vacation') THEN tmd.mode_duration_seconds ELSE 0 END), 0)::INT as runtime_seconds_mode_away,
+        COALESCE(SUM(CASE WHEN tmd.thermostat_mode IN ('eco', 'energy_saver') THEN tmd.mode_duration_seconds ELSE 0 END), 0)::INT as runtime_seconds_mode_eco,
+        COALESCE(SUM(CASE WHEN tmd.thermostat_mode NOT IN ('heat', 'cool', 'auto', 'heat-cool', 'off', 'away', 'vacation', 'eco', 'energy_saver') AND tmd.thermostat_mode IS NOT NULL THEN tmd.mode_duration_seconds ELSE 0 END), 0)::INT as runtime_seconds_mode_other,
+        erd.runtime_sessions_count::INT as runtime_sessions_count,
+        -- Get temperature/humidity from equipment_events if available (LEFT JOIN)
         aed.avg_temperature::NUMERIC as avg_temperature,
         aed.avg_humidity::NUMERIC as avg_humidity
-      FROM devices d
-      INNER JOIN all_event_dates aed ON aed.device_key = d.device_key
-      LEFT JOIN equipment_runtime_daily erd ON erd.device_key = d.device_key AND erd.date = aed.date
-      LEFT JOIN thermostat_mode_daily tmd ON tmd.device_key = d.device_key AND tmd.date = aed.date
-      WHERE d.device_id IS NOT NULL
-      GROUP BY d.device_id, aed.date, erd.runtime_seconds_total, erd.runtime_seconds_heat,
+      FROM equipment_runtime_daily erd
+      LEFT JOIN all_event_dates aed ON aed.device_key = erd.device_key AND aed.date = erd.date
+      LEFT JOIN thermostat_mode_daily tmd ON tmd.device_key = erd.device_key AND tmd.date = erd.date
+      GROUP BY erd.device_id, erd.date, erd.runtime_seconds_total, erd.runtime_seconds_heat,
                erd.runtime_seconds_cool, erd.runtime_seconds_fan, erd.runtime_seconds_auxheat,
                erd.runtime_seconds_unknown, erd.runtime_sessions_count, aed.avg_temperature, aed.avg_humidity
     )
