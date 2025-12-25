@@ -840,12 +840,52 @@ router.get('/runtime/reconcile/:deviceId', async (req: Request, res: Response) =
         : [device.device_key, device.timezone, deviceId]
     );
 
+    // Find dates with sessions but no equipment_events (root cause of summary gaps)
+    const noEventsQuery = `
+      WITH session_dates AS (
+        SELECT
+          DATE(rs.ended_at AT TIME ZONE COALESCE($2, 'UTC')) as date,
+          SUM(rs.runtime_seconds) / 3600.0 as session_hours,
+          COUNT(*) as session_count
+        FROM runtime_sessions rs
+        WHERE rs.device_key = $1
+          AND rs.ended_at IS NOT NULL
+        GROUP BY DATE(rs.ended_at AT TIME ZONE COALESCE($2, 'UTC'))
+      ),
+      event_dates AS (
+        SELECT DISTINCT DATE(ee.recorded_at AT TIME ZONE COALESCE($2, 'UTC')) as date
+        FROM equipment_events ee
+        WHERE ee.device_key = $1
+      ),
+      summary_runtime AS (
+        SELECT date, runtime_seconds_total / 3600.0 as summary_hours
+        FROM summaries_daily
+        WHERE device_id = $3
+      )
+      SELECT
+        sd.date,
+        sd.session_hours,
+        sd.session_count,
+        COALESCE(sr.summary_hours, 0) as summary_hours,
+        sd.session_hours - COALESCE(sr.summary_hours, 0) as hours_lost,
+        CASE WHEN ed.date IS NULL THEN true ELSE false END as no_equipment_events
+      FROM session_dates sd
+      LEFT JOIN event_dates ed ON ed.date = sd.date
+      LEFT JOIN summary_runtime sr ON sr.date = sd.date
+      WHERE sd.session_hours - COALESCE(sr.summary_hours, 0) > 0.01
+      ORDER BY sd.date DESC
+      LIMIT 30
+    `;
+
+    const noEventsResult = await pool.query(noEventsQuery, [device.device_key, device.timezone, deviceId]);
+
     const summaries = summariesResult.rows[0];
     const sessions = sessionsResult.rows[0];
     const filterCalc = filterCalcResult.rows[0];
     const today = todayResult.rows[0];
     const lastSummary = lastSummaryResult.rows[0];
     const missingDays = missingDaysResult.rows;
+    const datesWithLostHours = noEventsResult.rows;
 
     // Calculate discrepancies
     const realTimeFilterHours = parseFloat(device.filter_hours_used) || 0;
@@ -929,13 +969,29 @@ router.get('/runtime/reconcile/:deviceId', async (req: Request, res: Response) =
         note: 'Days with runtime_sessions but no summaries_daily entry',
       },
 
+      // Dates where summary hours < session hours (partial data loss)
+      dates_with_lost_hours: {
+        count: datesWithLostHours.length,
+        total_lost_hours: Math.round(datesWithLostHours.reduce((sum, d) => sum + (parseFloat(d.hours_lost) || 0), 0) * 100) / 100,
+        dates: datesWithLostHours.map(d => ({
+          date: d.date?.toISOString().split('T')[0],
+          session_hours: Math.round(parseFloat(d.session_hours) * 100) / 100,
+          summary_hours: Math.round(parseFloat(d.summary_hours) * 100) / 100,
+          hours_lost: Math.round(parseFloat(d.hours_lost) * 100) / 100,
+          no_equipment_events: d.no_equipment_events,
+        })),
+        note: 'summaryWorker requires equipment_events to exist; dates without events lose runtime',
+      },
+
       // Discrepancy analysis
       discrepancies: {
         filter_vs_summaries: Math.round((realTimeFilterHours - summaryTotalHours) * 100) / 100,
         filter_vs_sessions: Math.round((realTimeFilterHours - sessionTotalHours) * 100) / 100,
         summaries_vs_sessions: Math.round((summaryTotalHours - sessionTotalHours) * 100) / 100,
         possible_causes: [
-          ...(missingDays.length > 0 ? [`${missingDays.length} days missing from summaries (${Math.round(missingDays.reduce((sum, d) => sum + (parseFloat(d.hours) || 0), 0) * 100) / 100} hours)`] : []),
+          ...(datesWithLostHours.length > 0 ? [`${datesWithLostHours.length} dates have partial/missing runtime in summaries (${Math.round(datesWithLostHours.reduce((sum, d) => sum + (parseFloat(d.hours_lost) || 0), 0) * 100) / 100} hours lost)`] : []),
+          ...(datesWithLostHours.some(d => d.no_equipment_events) ? ['Some dates have no equipment_events - summaryWorker skips these'] : []),
+          ...(missingDays.length > 0 ? [`${missingDays.length} days completely missing from summaries (${Math.round(missingDays.reduce((sum, d) => sum + (parseFloat(d.hours) || 0), 0) * 100) / 100} hours)`] : []),
           ...(todayHours > 0 ? [`Today's ${todayHours.toFixed(2)} hours may not be in summaries yet`] : []),
           ...(Math.abs(realTimeFilterHours - calculatedFilterHours) > 0.1 ? ['Filter hours calculation drift detected'] : []),
           ...(parseInt(summaries.days_count) === 0 ? ['No summary data found for this device'] : []),
