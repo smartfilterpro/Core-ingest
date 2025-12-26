@@ -334,11 +334,11 @@ router.get('/usage/daily', async (req: Request, res: Response) => {
       )
       SELECT
         ds.date,
-        COALESCE(da.active_devices, 0) as active_devices,
+        GREATEST(COALESCE(da.active_devices, 0), COALESCE(dr.devices_with_runtime, 0)) as active_devices,
         COALESCE(dr.total_runtime_hours, 0) as total_runtime_hours,
         CASE
-          WHEN COALESCE(da.active_devices, 0) > 0
-          THEN COALESCE(dr.total_runtime_hours, 0) / da.active_devices
+          WHEN COALESCE(dr.devices_with_runtime, 0) > 0
+          THEN COALESCE(dr.total_runtime_hours, 0) / dr.devices_with_runtime
           ELSE 0
         END as avg_runtime_per_device,
         COALESCE(nu.new_users, 0) as new_users
