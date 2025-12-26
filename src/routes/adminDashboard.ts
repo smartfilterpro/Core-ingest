@@ -22,11 +22,12 @@ router.get('/stats/overview', async (_req: Request, res: Response) => {
       // Total devices
       pool.query(`SELECT COUNT(*) as total_devices FROM devices`),
 
-      // Active devices (seen in last 24h)
+      // Active devices (seen in last 24h OR had runtime in last 24h)
       pool.query(`
-        SELECT COUNT(*) as active_24h
-        FROM device_status
-        WHERE last_seen_at >= NOW() - INTERVAL '24 hours'
+        SELECT GREATEST(
+          (SELECT COUNT(*) FROM device_status WHERE last_seen_at >= NOW() - INTERVAL '24 hours'),
+          (SELECT COUNT(DISTINCT device_key) FROM runtime_sessions WHERE started_at >= NOW() - INTERVAL '24 hours')
+        ) as active_24h
       `),
 
       // Total runtime hours and average
