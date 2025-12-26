@@ -6,6 +6,7 @@ import { runSummaryWorker } from './workers/summaryWorker';
 import { runRegionAggregationWorker } from './workers/regionAggregationWorker';
 import { bubbleSummarySync } from './workers/bubbleSummarySync';
 import { heartbeatWorker } from './workers/heartbeatWorker';
+import { runAIWorker } from './workers/aiWorker';
 
 export function startCronJobs() {
   console.log('🕐 Starting cron jobs...');
@@ -62,6 +63,17 @@ export function startCronJobs() {
       console.log('[CRON] ✅ Heartbeat Worker completed');
     } catch (err: any) {
       console.error('[CRON] ❌ Heartbeat Worker failed:', err.message);
+    }
+  });
+
+  // Run AI Worker every hour at minute 30
+  cron.schedule('30 * * * *', async () => {
+    console.log('[CRON] Running AI Worker...');
+    try {
+      await runAIWorker(pool);
+      console.log('[CRON] ✅ AI Worker completed');
+    } catch (err: any) {
+      console.error('[CRON] ❌ AI Worker failed:', err.message);
     }
   });
 
