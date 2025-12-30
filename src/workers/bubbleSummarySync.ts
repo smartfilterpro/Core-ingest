@@ -50,15 +50,23 @@ export async function bubbleSummarySync() {
   let successCount = 0;
   try {
     const { rows } = await client.query(`
-      SELECT device_id, date, runtime_seconds_total, runtime_sessions_count, avg_temperature
-      FROM summaries_daily
-      ORDER BY updated_at DESC
+      SELECT
+        s.device_id,
+        d.device_name,
+        s.date,
+        s.runtime_seconds_total,
+        s.runtime_sessions_count,
+        s.avg_temperature
+      FROM summaries_daily s
+      LEFT JOIN devices d ON s.device_id = d.device_id
+      ORDER BY s.updated_at DESC
       LIMIT 25
     `);
 
     for (const row of rows) {
       const payload = {
         device_id: row.device_id,
+        device_name: row.device_name,
         date: row.date,
         runtime_seconds_total: row.runtime_seconds_total,
         runtime_sessions_count: row.runtime_sessions_count,
