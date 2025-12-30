@@ -4,6 +4,40 @@ import { pool } from '../db/pool.js';
 export const deviceStatusRouter = express.Router();
 
 /**
+ * GET /:deviceKey
+ * Returns the current status for a device
+ */
+deviceStatusRouter.get('/:deviceKey', async (req, res) => {
+  try {
+    const { deviceKey } = req.params;
+
+    const query = `
+      SELECT
+        device_key,
+        device_name,
+        is_reachable,
+        last_temperature,
+        current_equipment_status,
+        last_seen_at,
+        last_humidity
+      FROM device_status
+      WHERE device_key = $1;
+    `;
+
+    const result = await pool.query(query, [deviceKey]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ ok: false, error: 'Device not found' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (err: any) {
+    console.error('[DeviceStatus GET]', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/**
  * POST /ingest/v1/device-status
  * Upserts connectivity state for a device
  */
