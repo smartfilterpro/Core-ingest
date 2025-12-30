@@ -53,6 +53,7 @@ export async function bubbleSummarySync() {
       SELECT
         s.device_id,
         d.device_name,
+        d.filter_usage_percent,
         s.date,
         s.runtime_seconds_total,
         s.runtime_sessions_count,
@@ -64,9 +65,11 @@ export async function bubbleSummarySync() {
     `);
 
     for (const row of rows) {
+      const filterUsage = parseFloat(row.filter_usage_percent) || 0;
       const payload = {
         device_id: row.device_id,
         device_name: row.device_name,
+        filter_remaining_percent: Math.round(100 - filterUsage),
         date: row.date,
         runtime_seconds_total: row.runtime_seconds_total,
         runtime_sessions_count: row.runtime_sessions_count,
