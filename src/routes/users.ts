@@ -35,6 +35,38 @@ router.delete('/:userId', requireAuth, async (req: Request, res: Response) => {
 
     console.log(`[deleteUser] Found ${devices.length} devices for user ${userId}`);
 
+    // Record the deletion for historical tracking before deleting any data
+    try {
+      // Get workspace_id from first device (if exists)
+      const workspaceResult = await client.query(
+        'SELECT workspace_id FROM devices WHERE user_id = $1 LIMIT 1',
+        [userId]
+      );
+      const workspaceId = workspaceResult.rows[0]?.workspace_id || null;
+
+      await client.query(
+        `INSERT INTO user_deletions (user_id, deleted_at, deleted_date, device_count, workspace_id, metadata)
+         VALUES ($1, NOW(), CURRENT_DATE, $2, $3, $4)`,
+        [
+          userId,
+          devices.length,
+          workspaceId,
+          JSON.stringify({
+            device_keys: deviceKeys,
+            device_names: devices.map(d => d.device_name)
+          })
+        ]
+      );
+      console.log(`[deleteUser] Recorded deletion for user ${userId} in user_deletions`);
+    } catch (err: any) {
+      // Don't fail the deletion if tracking fails
+      if (err.code === '42P01') {
+        console.log('[deleteUser] user_deletions table does not exist, skipping tracking');
+      } else {
+        console.warn('[deleteUser] Failed to record deletion (continuing):', err.message);
+      }
+    }
+
     // Delete all related records for all devices belonging to this user
     // NO TRANSACTION - Each deletion is independent to allow permissive error handling
     // If one table fails, others can still succeed

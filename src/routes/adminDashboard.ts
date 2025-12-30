@@ -1008,4 +1008,201 @@ router.get('/runtime/reconcile/:deviceId', async (req: Request, res: Response) =
   }
 });
 
+/**
+ * GET /admin/users/metrics
+ * Get historical user metrics - users added and deleted per day
+ */
+router.get('/users/metrics', async (req: Request, res: Response) => {
+  try {
+    const days = Math.min(parseInt(req.query.days as string) || 30, 365);
+
+    // Check if user_metrics_daily table exists
+    const tableCheck = await pool.query(`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables
+        WHERE table_name = 'user_metrics_daily'
+      ) as exists
+    `);
+
+    if (!tableCheck.rows[0]?.exists) {
+      // Fallback to computing metrics on-the-fly from devices table
+      const fallbackResult = await pool.query(`
+        WITH date_series AS (
+          SELECT generate_series(
+            CURRENT_DATE - INTERVAL '${days} days',
+            CURRENT_DATE,
+            '1 day'::interval
+          )::date as date
+        ),
+        new_users AS (
+          SELECT
+            DATE(MIN(created_at)) as join_date,
+            COUNT(DISTINCT user_id) as new_user_count
+          FROM devices
+          WHERE user_id IS NOT NULL
+          GROUP BY user_id
+        ),
+        new_users_by_date AS (
+          SELECT join_date as date, SUM(new_user_count) as users_added
+          FROM new_users
+          GROUP BY join_date
+        )
+        SELECT
+          ds.date,
+          COALESCE(nu.users_added, 0) as users_added,
+          0 as users_deleted,
+          0 as net_user_change,
+          0 as total_users,
+          0 as total_devices,
+          0 as active_users_24h
+        FROM date_series ds
+        LEFT JOIN new_users_by_date nu ON nu.date = ds.date
+        ORDER BY ds.date ASC
+      `);
+
+      return res.json({
+        data: fallbackResult.rows.map(row => ({
+          date: row.date.toISOString().split('T')[0],
+          users_added: parseInt(row.users_added),
+          users_deleted: parseInt(row.users_deleted),
+          net_change: parseInt(row.net_user_change),
+          total_users: parseInt(row.total_users),
+          total_devices: parseInt(row.total_devices),
+          active_users_24h: parseInt(row.active_users_24h),
+        })),
+        period_days: days,
+        source: 'computed',
+        note: 'user_metrics_daily table not found, computed from devices table (deletions not tracked)',
+      });
+    }
+
+    const { rows } = await pool.query(`
+      SELECT
+        date,
+        users_added,
+        users_deleted,
+        net_user_change,
+        total_users,
+        total_devices,
+        active_users_24h
+      FROM user_metrics_daily
+      WHERE date >= CURRENT_DATE - INTERVAL '${days} days'
+      ORDER BY date ASC
+    `);
+
+    // Calculate period totals
+    const totalAdded = rows.reduce((sum, row) => sum + parseInt(row.users_added), 0);
+    const totalDeleted = rows.reduce((sum, row) => sum + parseInt(row.users_deleted), 0);
+
+    res.json({
+      data: rows.map(row => ({
+        date: row.date.toISOString().split('T')[0],
+        users_added: parseInt(row.users_added),
+        users_deleted: parseInt(row.users_deleted),
+        net_change: parseInt(row.net_user_change),
+        total_users: parseInt(row.total_users),
+        total_devices: parseInt(row.total_devices),
+        active_users_24h: parseInt(row.active_users_24h),
+      })),
+      period_days: days,
+      summary: {
+        total_added: totalAdded,
+        total_deleted: totalDeleted,
+        net_change: totalAdded - totalDeleted,
+      },
+      source: 'user_metrics_daily',
+    });
+  } catch (err: any) {
+    console.error('[admin/users/metrics] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /admin/users/deletions
+ * Get recent user deletions with details
+ */
+router.get('/users/deletions', async (req: Request, res: Response) => {
+  try {
+    const days = Math.min(parseInt(req.query.days as string) || 30, 365);
+    const limit = Math.min(parseInt(req.query.limit as string) || 100, 500);
+
+    // Check if user_deletions table exists
+    const tableCheck = await pool.query(`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables
+        WHERE table_name = 'user_deletions'
+      ) as exists
+    `);
+
+    if (!tableCheck.rows[0]?.exists) {
+      return res.json({
+        deletions: [],
+        total_count: 0,
+        period_days: days,
+        note: 'user_deletions table not found - deletion tracking not yet enabled',
+      });
+    }
+
+    const [deletionsResult, countResult, dailyResult] = await Promise.all([
+      // Get individual deletions
+      pool.query(`
+        SELECT
+          id,
+          user_id,
+          deleted_at,
+          deleted_date,
+          device_count,
+          workspace_id,
+          metadata
+        FROM user_deletions
+        WHERE deleted_date >= CURRENT_DATE - INTERVAL '${days} days'
+        ORDER BY deleted_at DESC
+        LIMIT $1
+      `, [limit]),
+
+      // Get total count
+      pool.query(`
+        SELECT COUNT(*) as total
+        FROM user_deletions
+        WHERE deleted_date >= CURRENT_DATE - INTERVAL '${days} days'
+      `),
+
+      // Get daily breakdown
+      pool.query(`
+        SELECT
+          deleted_date as date,
+          COUNT(*) as count,
+          SUM(device_count) as total_devices_deleted
+        FROM user_deletions
+        WHERE deleted_date >= CURRENT_DATE - INTERVAL '${days} days'
+        GROUP BY deleted_date
+        ORDER BY deleted_date DESC
+      `)
+    ]);
+
+    res.json({
+      deletions: deletionsResult.rows.map(row => ({
+        id: row.id,
+        user_id: row.user_id,
+        deleted_at: row.deleted_at?.toISOString(),
+        deleted_date: row.deleted_date?.toISOString().split('T')[0],
+        device_count: parseInt(row.device_count),
+        workspace_id: row.workspace_id,
+        metadata: row.metadata,
+      })),
+      total_count: parseInt(countResult.rows[0]?.total || '0'),
+      daily_breakdown: dailyResult.rows.map(row => ({
+        date: row.date?.toISOString().split('T')[0],
+        count: parseInt(row.count),
+        devices_deleted: parseInt(row.total_devices_deleted),
+      })),
+      period_days: days,
+    });
+  } catch (err: any) {
+    console.error('[admin/users/deletions] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;
