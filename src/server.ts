@@ -25,7 +25,7 @@ import runtimeReportRouter from "./routes/runtimeReport";
 import adminDashboardRouter from "./routes/adminDashboard";
 
 // Workers + utilities
-import { runSessionStitcher, runSummaryWorker, runRegionAggregationWorker, bubbleSummarySync, heartbeatWorker, backfillRuntimeSessions } from "./workers/index";
+import { runSessionStitcher, runSummaryWorker, runRegionAggregationWorker, bubbleSummarySync, heartbeatWorker, backfillRuntimeSessions, runUserMetricsWorker, backfillUserMetrics } from "./workers/index";
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -70,6 +70,7 @@ app.get("/workers/run-all", async (_req, res) => {
     results.push({ worker: "regionAggregationWorker", result: await runRegionAggregationWorker(pool) });
     results.push({ worker: "bubbleSummarySync", result: await bubbleSummarySync() });
     results.push({ worker: "heartbeatWorker", result: await heartbeatWorker(pool) });
+    results.push({ worker: "userMetricsWorker", result: await runUserMetricsWorker(pool) });
 
     res.status(200).json({ ok: true, message: "All workers completed successfully", results });
   } catch (err: any) {
@@ -136,6 +137,34 @@ app.get("/workers/backfill-sessions", async (req, res) => {
     });
   } catch (err: any) {
     console.error("[workers] Error backfilling sessions:", err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/* ------------------- Run/Backfill User Metrics ------------------ */
+app.get("/workers/run-user-metrics", async (req, res) => {
+  const backfill = req.query.backfill === 'true';
+  const days = req.query.days ? parseInt(req.query.days as string) : 365;
+
+  console.log(`[workers] Running user metrics worker (backfill=${backfill}, days=${days})...`);
+
+  try {
+    let result;
+    if (backfill) {
+      result = await backfillUserMetrics(pool, days);
+    } else {
+      result = await runUserMetricsWorker(pool);
+    }
+
+    res.status(200).json({
+      ok: true,
+      message: backfill
+        ? `User metrics backfill completed for ${days} days`
+        : "User metrics worker completed",
+      result
+    });
+  } catch (err: any) {
+    console.error("[workers] Error running user metrics worker:", err);
     res.status(500).json({ ok: false, error: err.message });
   }
 });

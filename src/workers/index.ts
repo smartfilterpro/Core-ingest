@@ -4,3 +4,4 @@ export { runSummaryWorker } from './summaryWorker';
 export { runRegionAggregationWorker } from './regionAggregationWorker';
 export { bubbleSummarySync } from './bubbleSummarySync';
 export { heartbeatWorker } from './heartbeatWorker';
+export { runUserMetricsWorker, backfillUserMetrics } from './userMetricsWorker';
