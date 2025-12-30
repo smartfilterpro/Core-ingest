@@ -24,7 +24,10 @@ async function postWithRetry(
   while (attempt <= retries) {
     try {
       const res = await axios.post(BUBBLE_SYNC_URL, payload, {
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${process.env.BUBBLE_API_KEY}`,
+        },
         timeout: 10000,
       });
       return res;
