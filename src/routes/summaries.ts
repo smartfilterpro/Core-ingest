@@ -1,6 +1,36 @@
 import express, { Request, Response } from 'express';
 import { pool } from '../db/pool';
+import { runSummaryWorker } from '../workers/summaryWorker';
 const router = express.Router();
+
+/**
+ * POST /summaries/backfill
+ * TEMPORARY: One-time backfill endpoint - DELETE AFTER USE
+ * Triggers full history summary regeneration
+ */
+router.post('/backfill', async (req: Request, res: Response) => {
+  try {
+    const { secret } = req.body;
+
+    // Simple protection - change this secret before deploying
+    if (secret !== 'backfill-2024-run-once') {
+      return res.status(401).json({ ok: false, error: 'Invalid secret' });
+    }
+
+    console.log('🔄 Starting backfill via API endpoint...');
+    const result = await runSummaryWorker(pool, { fullHistory: true });
+
+    res.json({
+      ok: result.success,
+      message: result.success ? 'Backfill complete' : 'Backfill failed',
+      records: result.records,
+      error: result.error,
+    });
+  } catch (err: any) {
+    console.error('[summaries/backfill/POST] Error:', err.message);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
 
 /**
  * GET /summaries/daily
