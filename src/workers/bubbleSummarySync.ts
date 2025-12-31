@@ -24,20 +24,16 @@ async function postWithRetry(
 ): Promise<AxiosResponse<any>> {
   let attempt = 0;
 
-  // Build URL with api_token if key is available
-  const url = BUBBLE_API_KEY
-    ? `${BUBBLE_SYNC_URL}?api_token=${BUBBLE_API_KEY}`
-    : BUBBLE_SYNC_URL;
-
   if (!BUBBLE_API_KEY) {
     console.warn('[bubbleSummarySync] Warning: BUBBLE_API_KEY is not set');
   }
 
   while (attempt <= retries) {
     try {
-      const res = await axios.post(url, payload, {
+      const res = await axios.post(BUBBLE_SYNC_URL, payload, {
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${BUBBLE_API_KEY}`,
         },
         timeout: 10000,
       });
