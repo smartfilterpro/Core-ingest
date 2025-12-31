@@ -10,8 +10,8 @@ const pool = new Pool({
     : { rejectUnauthorized: false },
 });
 
-const BUBBLE_SYNC_URL =
-  process.env.BUBBLE_SYNC_URL ||
+const BUBBLE_SUMMARY_SYNC_URL =
+  process.env.BUBBLE_SUMMARY_SYNC_URL ||
   'https://smartfilterpro-scaling.bubbleapps.io/version-test/api/1.1/wf/core_ingest_summary';
 
 const BUBBLE_API_KEY = process.env.BUBBLE_API_KEY;
@@ -30,7 +30,7 @@ async function postWithRetry(
 
   while (attempt <= retries) {
     try {
-      const res = await axios.post(BUBBLE_SYNC_URL, payload, {
+      const res = await axios.post(BUBBLE_SUMMARY_SYNC_URL, payload, {
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${BUBBLE_API_KEY}`,
