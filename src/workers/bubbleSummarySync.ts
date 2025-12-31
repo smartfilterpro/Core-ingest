@@ -14,6 +14,8 @@ const BUBBLE_SYNC_URL =
   process.env.BUBBLE_SYNC_URL ||
   'https://smartfilterpro-scaling.bubbleapps.io/version-test/api/1.1/wf/core_ingest_summary';
 
+const BUBBLE_API_KEY = process.env.BUBBLE_API_KEY;
+
 // Simple exponential backoff retry
 async function postWithRetry(
   payload: any,
@@ -21,12 +23,21 @@ async function postWithRetry(
   delayMs = 2000
 ): Promise<AxiosResponse<any>> {
   let attempt = 0;
+
+  // Build URL with api_token if key is available
+  const url = BUBBLE_API_KEY
+    ? `${BUBBLE_SYNC_URL}?api_token=${BUBBLE_API_KEY}`
+    : BUBBLE_SYNC_URL;
+
+  if (!BUBBLE_API_KEY) {
+    console.warn('[bubbleSummarySync] Warning: BUBBLE_API_KEY is not set');
+  }
+
   while (attempt <= retries) {
     try {
-      const res = await axios.post(BUBBLE_SYNC_URL, payload, {
+      const res = await axios.post(url, payload, {
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${process.env.BUBBLE_API_KEY}`,
         },
         timeout: 10000,
       });
