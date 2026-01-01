@@ -59,38 +59,47 @@ export async function bubbleSummarySync() {
   const client = await pool.connect();
   let successCount = 0;
   try {
+    // Query device_states for cumulative runtime data, not summaries_daily
+    // device_states.hours_used_total = total cumulative runtime (e.g., 174 hours)
+    // device_states.filter_hours_used = runtime since last filter reset
     const { rows } = await client.query(`
       SELECT
-        s.device_id,
+        d.device_id,
         d.device_name,
         d.filter_usage_percent,
-        s.date,
-        s.runtime_seconds_total,
-        s.runtime_sessions_count,
-        s.avg_temperature
-      FROM summaries_daily s
-      LEFT JOIN devices d ON s.device_id = d.device_id
-      ORDER BY s.updated_at DESC
+        d.filter_target_hours,
+        ds.hours_used_total,
+        ds.filter_hours_used,
+        ds.last_reset_ts
+      FROM devices d
+      LEFT JOIN device_states ds ON d.device_key = ds.device_key
+      WHERE d.device_id IS NOT NULL
+        AND ds.device_key IS NOT NULL
+      ORDER BY ds.last_event_ts DESC NULLS LAST
       LIMIT 25
     `);
 
     for (const row of rows) {
       const filterUsage = parseFloat(row.filter_usage_percent) || 0;
+      // Convert hours to seconds for runtime_seconds_total
+      const hoursUsedTotal = parseFloat(row.hours_used_total) || 0;
+      const filterHoursUsed = parseFloat(row.filter_hours_used) || 0;
       const payload = {
         device_id: row.device_id,
         device_name: row.device_name,
         filter_remaining_percent: Math.round(100 - filterUsage),
-        date: row.date,
-        runtime_seconds_total: row.runtime_seconds_total,
-        runtime_sessions_count: row.runtime_sessions_count,
-        avg_temperature: row.avg_temperature,
+        filter_target_hours: parseFloat(row.filter_target_hours) || 100,
+        // Send cumulative totals, not daily totals
+        runtime_seconds_total: Math.round(hoursUsedTotal * 3600),
+        filter_runtime_seconds: Math.round(filterHoursUsed * 3600),
+        last_reset_ts: row.last_reset_ts,
       };
 
       try {
         const res = await postWithRetry(payload, 3, 2000);
         if (res) {
           console.log(
-            `[bubbleSummarySync] Synced ${row.device_id} (${row.date}) → ${res.status}`
+            `[bubbleSummarySync] Synced ${row.device_id} (${hoursUsedTotal.toFixed(1)}h total) → ${res.status}`
           );
         }
         successCount++;
