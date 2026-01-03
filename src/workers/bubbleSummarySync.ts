@@ -41,9 +41,13 @@ async function postWithRetry(
     } catch (err: any) {
       attempt++;
       const status = err.response?.status;
+      const responseBody = err.response?.data;
       const isRetryable = !status || status >= 500 || status === 429;
       if (!isRetryable || attempt > retries) {
         console.error(`[bubbleSummarySync] Permanent failure: ${err.message}`);
+        console.error(`[bubbleSummarySync] Response status: ${status}`);
+        console.error(`[bubbleSummarySync] Response body:`, JSON.stringify(responseBody, null, 2));
+        console.error(`[bubbleSummarySync] Request payload:`, JSON.stringify(payload, null, 2));
         throw err;
       }
       const wait = delayMs * attempt;
@@ -96,6 +100,7 @@ export async function bubbleSummarySync() {
       };
 
       try {
+        console.log(`[bubbleSummarySync] Sending payload for ${row.device_id}:`, JSON.stringify(payload, null, 2));
         const res = await postWithRetry(payload, 3, 2000);
         if (res) {
           console.log(
