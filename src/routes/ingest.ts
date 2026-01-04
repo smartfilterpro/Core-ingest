@@ -321,6 +321,8 @@ ingestRouter.post(
             last_temperature = COALESCE(EXCLUDED.last_temperature, device_status.last_temperature),
             last_cool_setpoint = COALESCE(EXCLUDED.last_cool_setpoint, device_status.last_cool_setpoint),
             last_heat_setpoint = COALESCE(EXCLUDED.last_heat_setpoint, device_status.last_heat_setpoint),
+            is_reachable = COALESCE(EXCLUDED.is_reachable, device_status.is_reachable),
+            last_seen_at = COALESCE(EXCLUDED.last_seen_at, device_status.last_seen_at),
             updated_at = NOW()
           `,
           [
